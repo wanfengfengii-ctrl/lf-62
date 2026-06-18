@@ -3,7 +3,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from app.database import engine, Base
-from app.routers import ships, docks, tides, tasks, schedules, pages, materials, crews, costs
+from app.routers import ships, docks, tides, tasks, schedules, pages, materials, crews
 
 
 Base.metadata.create_all(bind=engine)
@@ -20,7 +20,6 @@ app.include_router(tasks.router, prefix="/api/tasks", tags=["tasks"])
 app.include_router(schedules.router, prefix="/api/schedules", tags=["schedules"])
 app.include_router(materials.router, prefix="/api/materials", tags=["materials"])
 app.include_router(crews.router, prefix="/api/crews", tags=["crews"])
-app.include_router(costs.router, prefix="/api/costs", tags=["costs"])
 app.include_router(pages.router, tags=["pages"])
 
 

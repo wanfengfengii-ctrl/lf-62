@@ -1,0 +1,441 @@
+{% extends "base.html" %}
+{% block title %}工匠班组管理{% endblock %}
+{% block extra_css %}
+<style>
+.crew-card { transition: all 0.2s; }
+.crew-card:hover { background-color: #f8f9fa; }
+.availability-cell { min-width: 100px; text-align: center; }
+.avail-ok { background-color: #d1e7dd; }
+.avail-low { background-color: #fff3cd; }
+.avail-none { background-color: #f8d7da; }
+.hour-input { width: 70px; }
+</style>
+{% endblock %}
+{% block content %}
+<h2>工匠班组与排班管理</h2>
+
+<div class="row g-3">
+    <div class="col-md-6">
+        <div class="card mb-4">
+            <div class="card-header">新增班组</div>
+            <div class="card-body">
+                <form id="crewForm" class="row g-3">
+                    <div class="col-md-3">
+                        <label class="form-label">班组编码 *</label>
+                        <input type="text" class="form-control" id="cCode" required>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">班组名称 *</label>
+                        <input type="text" class="form-control" id="cName" required>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">工种类型 *</label>
+                        <select class="form-select" id="cType" required>
+                            <option value="木工">木工</option>
+                            <option value="油工">油工</option>
+                            <option value="杂工">杂工</option>
+                            <option value="起重">起重</option>
+                            <option value="其他">其他</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2 d-flex align-items-end">
+                        <button type="button" class="btn btn-primary w-100" onclick="saveCrew()">保存</button>
+                    </div>
+                    <div class="col-md-12">
+                        <label class="form-label">描述</label>
+                        <input type="text" class="form-control" id="cDesc">
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-6">
+        <div class="card mb-4">
+            <div class="card-header">新增人员</div>
+            <div class="card-body">
+                <form id="memberForm" class="row g-3">
+                    <div class="col-md-4">
+                <label class="form-label">所属班组 *</label>
+                <select class="form-select" id="memCrew" required></select>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">姓名 *</label>
+                <input type="text" class="form-control" id="memName" required>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">联系电话</label>
+                <input type="text" class="form-control" id="memPhone">
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">技能等级</label>
+                <select class="form-select" id="memSkill">
+                    <option value="">请选择</option>
+                    <option value="初级">初级</option>
+                    <option value="中级">中级</option>
+                    <option value="高级">高级</option>
+                    <option value="技师">技师</option>
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">状态</label>
+                <select class="form-select" id="memStatus">
+                    <option value="在职">在职</option>
+                    <option value="休假">休假</option>
+                    <option value="离职">离职</option>
+                </select>
+            </div>
+            <div class="col-md-4 d-flex align-items-end">
+                <button type="button" class="btn btn-success w-100" onclick="saveMember()">添加</button>
+            </div>
+        </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <span>班组列表</span>
+        <div class="d-flex gap-2">
+            <select class="form-select form-select-sm" id="filterCrewType" style="width:auto;" onchange="loadCrews()">
+                <option value="">全部类型</option>
+                <option value="木工">木工</option>
+                <option value="油工">杂工</option>
+                <option value="起重">起重</option>
+                <option value="其他">其他</option>
+            </select>
+        </div>
+    </div>
+    <div class="card-body">
+        <div id="crewLowHoursAlerts" class="mb-3"></div>
+        <table class="table table-sm" id="crewTable">
+            <thead>
+                <tr>
+                    <th>编码</th><th>名称</th><th>工种</th><th>人数</th>
+                    <th>成员</th><th>描述</th><th>操作</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <span>班组排班视图</span>
+        <div class="d-flex gap-2 flex-wrap align-items-center">
+            <input type="date" class="form-control form-control-sm" id="availFromDate" style="width:auto;" onchange="loadAvailabilityView()">
+            <span>至</span>
+            <input type="date" class="form-control form-control-sm" id="availToDate" style="width:auto;" onchange="loadAvailabilityView()">
+            <select class="form-select form-select-sm" id="availCrewType" style="width:auto;" onchange="loadAvailabilityView()">
+                <option value="">全部工种</option>
+                <option value="木工">木工</option>
+                <option value="油工">油工</option>
+                <option value="杂工">杂工</option>
+                <option value="起重">起重</option>
+                <option value="其他">其他</option>
+            </select>
+        </div>
+    </div>
+    <div class="card-body" style="overflow-x:auto;">
+        <table class="table table-sm table-bordered" id="availabilityTable">
+            <thead></thead>
+            <tbody></tbody>
+        </table>
+        <div class="mt-2">
+            <button type="button" class="btn btn-outline-primary btn-sm" onclick="showBatchAvailabilityModal()">批量设置排班</button>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="batchAvailModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">批量设置班组排班</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label">选择班组（可多选，Ctrl多选）</label>
+                    <select class="form-select" id="batchCrews" multiple size="5"></select>
+                    <small class="text-muted">按住 Ctrl/Cmd 多选</small>
+                </div>
+                <div class="row g-3 mb-3">
+                    <div class="col-md-6">
+                        <label class="form-label">起始日期 *</label>
+                        <input type="date" class="form-control" id="batchFromDate">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">结束日期 *</label>
+                        <input type="date" class="form-control" id="batchToDate">
+                    </div>
+                </div>
+                <div class="row g-3 mb-3">
+                    <div class="col-md-6">
+                        <label class="form-label">每日可用工时</label>
+                        <input type="number" class="form-control" id="batchHours" value="8" min="0" max="24" step="0.5">
+                    </div>
+                    <div class="col-md-6 d-flex align-items-end">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="batchSkipWeekend" checked>
+                            <label class="form-check-label" for="batchSkipWeekend">跳过周末</label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" onclick="batchSaveAvailability()">保存</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+{% block extra_js %}
+<script>
+const CREW_API = '/api/crews';
+
+let currentCrews = [];
+
+async function loadCrews() {
+    const crew_type = document.getElementById('filterCrewType').value;
+    let url = CREW_API;
+    if (crew_type) url += `?crew_type=${crew_type}`;
+    const res = await fetch(url);
+    currentCrews = await res.json();
+    renderCrews(currentCrews);
+    updateCrewSelects();
+    loadCrewLowHoursAlerts();
+    loadAvailabilityView();
+}
+
+function renderCrews(crews) {
+    const tbody = document.querySelector('#crewTable tbody');
+    if (!crews.length) {
+        tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">暂无班组数据</td></tr>';
+        return;
+    }
+    tbody.innerHTML = crews.map(c => `
+        <tr class="crew-card">
+            <td><code>${c.code}</code></td>
+            <td><strong>${c.name}</strong></td>
+            <td><span class="badge bg-info">${c.crew_type}</span></td>
+            <td>${c.member_count}人</td>
+            <td><button class="btn btn-sm btn-outline-secondary" onclick="showCrewMembers(${c.id}, '${c.name}')">查看成员</button></td>
+            <td><small class="text-muted">${c.description || '-'}</small></td>
+            <td><button class="btn btn-sm btn-outline-danger" onclick="deleteCrew(${c.id})">删除</button></td>
+        </tr>
+    `).join('');
+}
+
+function updateCrewSelects() {
+    const memSel = document.getElementById('memCrew');
+    const batchSel = document.getElementById('batchCrews');
+    const options = currentCrews.map(c => `<option value="${c.id}">${c.code} - ${c.name} (${c.crew_type})</option>`).join('');
+    memSel.innerHTML = '<option value="">请选择班组</option>' + options;
+    batchSel.innerHTML = options;
+}
+
+async function loadCrewLowHoursAlerts() {
+    const res = await fetch(`${CREW_API}/alerts/low-hours`);
+    const alerts = await res.json();
+    const div = document.getElementById('crewLowHoursAlerts');
+    if (!alerts.length) {
+        div.innerHTML = '';
+        return;
+    }
+    div.innerHTML = `
+        <div class="alert alert-warning mb-0 py-2">
+            <strong>工时预警（${alerts.length}个班组工时不足）：</strong>
+            ${alerts.map(a => `<span class="badge bg-danger me-1">${a.crew_code} ${a.crew_name}: ${a.shortage_count}天</span>`).join('')}
+        </div>
+    `;
+}
+
+async function loadAvailabilityView() {
+    const from_date = document.getElementById('availFromDate').value;
+    const to_date = document.getElementById('availToDate').value;
+    const crew_type = document.getElementById('availCrewType').value;
+    if (!from_date || !to_date) return;
+    let url = `${CREW_API}/availability/view?from_date=${from_date}&to_date=${to_date}`;
+    if (crew_type) url += `&crew_type=${crew_type}`;
+    const res = await fetch(url);
+    const data = await res.json();
+    renderAvailabilityView(data);
+}
+
+function renderAvailabilityView(data) {
+    const thead = document.querySelector('#availabilityTable thead');
+    const tbody = document.querySelector('#availabilityTable tbody');
+    if (!data.crews || !data.crews.length) {
+        thead.innerHTML = '';
+        tbody.innerHTML = '<tr><td class="text-center text-muted">暂无排班数据</td></tr>';
+        return;
+    }
+    let headerHtml = '<tr><th>班组</th>';
+    data.days.forEach(d => {
+        const dateObj = new Date(d);
+        const weekday = ['日一二三四五六'[dateObj.getDay()];
+        const weekend = dateObj.getDay() === 0 || dateObj.getDay() === 6;
+        headerHtml += `<th class="${weekend ? 'bg-light' : ''}">${d.slice(5)}<br><small>周${weekday}</small></th>`;
+    });
+    headerHtml += '</tr>';
+    thead.innerHTML = headerHtml;
+
+    let bodyHtml = '';
+    data.crews.forEach(crew => {
+        bodyHtml += `<tr><td><code>${crew.crew_code}</code> ${crew.crew_name}<br><small class="text-muted">${crew.crew_type}</small></td>`;
+        crew.days.forEach(d => {
+            let cellClass = 'avail-ok';
+            if (d.available_hours <= 0) cellClass = 'avail-none';
+            else if (d.remaining_hours < 4) cellClass = 'avail-low';
+            bodyHtml += `<td class="availability-cell ${cellClass}">
+                <div><strong>${d.available_hours}h</strong></div>
+                <div class="text-muted"><small>已用:${d.used_hours}h</small></div>
+                <button class="btn btn-sm btn-outline-secondary mt-1" onclick="editDayAvailability(${crew.crew_id}, '${d.date}', ${d.available_hours})">编辑</button>
+            </td>`;
+        });
+        bodyHtml += '</tr>';
+    });
+    tbody.innerHTML = bodyHtml;
+}
+
+async function saveCrew() {
+    const data = {
+        code: document.getElementById('cCode').value.trim(),
+        name: document.getElementById('cName').value.trim(),
+        crew_type: document.getElementById('cType').value,
+        description: document.getElementById('cDesc').value.trim() || null
+    };
+    if (!data.code || !data.name) { alert('请填写必填项'); return; }
+    const res = await fetch(CREW_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+    });
+    if (res.ok) {
+        document.getElementById('crewForm').reset();
+        loadCrews();
+    } else {
+        const err = await res.json();
+        alert(err.detail || '保存失败');
+    }
+}
+
+async function deleteCrew(id) {
+    if (!confirm('确定删除此班组？')) return;
+    const res = await fetch(`${CREW_API}/${id}`, { method: 'DELETE' });
+    if (res.ok) loadCrews();
+    else { const err = await res.json(); alert(err.detail || '删除失败'); }
+}
+
+async function saveMember() {
+    const data = {
+        crew_id: parseInt(document.getElementById('memCrew').value),
+        name: document.getElementById('memName').value.trim(),
+        phone: document.getElementById('memPhone').value.trim() || null,
+        skill_level: document.getElementById('memSkill').value || null,
+        status: document.getElementById('memStatus').value
+    };
+    if (!data.crew_id || !data.name) { alert('请填写必填项'); return; }
+    const res = await fetch(`${CREW_API}/members`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+    });
+    if (res.ok) {
+        document.getElementById('memberForm').reset();
+        loadCrews();
+    } else {
+        const err = await res.json();
+        alert(err.detail || '保存失败');
+    }
+}
+
+async function showCrewMembers(crewId, crewName) {
+    const res = await fetch(`${CREW_API}/${crewId}/members`);
+    const members = await res.json();
+    alert(`${crewName} 成员：\n\n` + members.map(m => `- ${m.name} (${m.status}${m.skill_level ? ', ' + m.skill_level : ''}${m.phone ? ', ' + m.phone : ''}`).join('\n') || '暂无成员');
+}
+
+async function editDayAvailability(crewId, workDate, currentHours) {
+    const hoursStr = prompt(`设置 ${workDate} 可用工时 (当前: ${currentHours}h)`);
+    if (hoursStr === null) return;
+    const hours = parseFloat(hoursStr);
+    if (isNaN(hours) || hours < 0) { alert('请输入有效工时'); return; }
+const data = {
+        crew_id: crewId,
+        work_date: workDate,
+        available_hours: hours
+    };
+    const res = await fetch(`${CREW_API}/availability`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+    });
+    if (res.ok) {
+        loadAvailabilityView();
+        loadCrews();
+    } else {
+        const err = await res.json();
+        alert(err.detail || '保存失败');
+    }
+}
+
+function showBatchAvailabilityModal() {
+    updateCrewSelects();
+    const from_date = document.getElementById('availFromDate').value;
+    const to_date = document.getElementById('availToDate').value;
+    if (from_date) document.getElementById('batchFromDate').value = from_date;
+    if (to_date) document.getElementById('batchToDate').value = to_date;
+    new bootstrap.Modal(document.getElementById('batchAvailModal')).show();
+}
+
+function getSelectedCrewIds() {
+    return Array.from(document.getElementById('batchCrews').selectedOptions).map(o => parseInt(o.value));
+}
+
+async function batchSaveAvailability() {
+    const crew_ids = getSelectedCrewIds();
+    const from_date = document.getElementById('batchFromDate').value;
+    const to_date = document.getElementById('batchToDate').value;
+    const hours = parseFloat(document.getElementById('batchHours').value) || 0;
+    const skip_weekends = document.getElementById('batchSkipWeekend').checked;
+    if (!crew_ids.length || !from_date || !to_date) {
+        alert('请填写所有必填项');
+        return;
+    }
+    const res = await fetch(`${CREW_API}/availability/batch?crew_ids=${encodeURIComponent(JSON.stringify(crew_ids))}&from_date=${from_date}&to_date=${to_date}&available_hours=${hours}&skip_weekends=${skip_weekends}`, { method: 'POST'
+    });
+    if (res.ok) {
+        const result = await res.json();
+        alert(`批量设置完成：新增${result.created}条，更新${result.updated}条`);
+        bootstrap.Modal.getInstance(document.getElementById('batchAvailModal')).hide();
+        loadAvailabilityView();
+        loadCrews();
+    } else {
+        const err = await res.json();
+        alert(err.detail || '保存失败');
+    }
+}
+
+function formatDT(dt) {
+    if (!dt) return '-';
+    const d = new Date(dt);
+    const pad = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+(async function init() {
+    const today = new Date();
+    const nextWeek = new Date(today);
+    nextWeek.setDate(nextWeek.getDate() + 14);
+    document.getElementById('availFromDate').value = formatDT(today);
+    document.getElementById('availToDate').value = formatDT(nextWeek);
+    await loadCrews();
+})();
+</script>
+{% endblock %}

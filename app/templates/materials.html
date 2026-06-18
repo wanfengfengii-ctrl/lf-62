@@ -1,0 +1,442 @@
+{% extends "base.html" %}
+{% block title %}物料台账管理{% endblock %}
+{% block extra_css %}
+<style>
+.low-stock { background-color: #fff3cd !important; }
+.out-of-stock { background-color: #f8d7da !important; }
+.badge-category { font-size: 0.75em; }
+</style>
+{% endblock %}
+{% block content %}
+<h2>物料台账管理</h2>
+
+<div class="card mb-4">
+    <div class="card-header">新增物料</div>
+    <div class="card-body">
+        <form id="materialForm" class="row g-3">
+            <div class="col-md-2">
+                <label class="form-label">物料编码 *</label>
+                <input type="text" class="form-control" id="mCode" required>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">物料名称 *</label>
+                <input type="text" class="form-control" id="mName" required>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">分类 *</label>
+                <select class="form-select" id="mCategory" required>
+                    <option value="木材">木材</option>
+                    <option value="油料">油料</option>
+                    <option value="绳索">绳索</option>
+                    <option value="铁件">铁件</option>
+                    <option value="其他">其他</option>
+                </select>
+            </div>
+            <div class="col-md-1">
+                <label class="form-label">单位 *</label>
+                <input type="text" class="form-control" id="mUnit" placeholder="如:根/升" required>
+            </div>
+            <div class="col-md-1">
+                <label class="form-label">安全库存</label>
+                <input type="number" class="form-control" id="mSafety" step="0.01" value="0">
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">描述</label>
+                <input type="text" class="form-control" id="mDesc">
+            </div>
+            <div class="col-md-1 d-flex align-items-end">
+                <button type="button" class="btn btn-primary w-100" onclick="saveMaterial()">保存</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-header">库存操作（入库/出库/盘点）</div>
+    <div class="card-body">
+        <form id="inventoryForm" class="row g-3">
+            <div class="col-md-3">
+                <label class="form-label">选择物料 *</label>
+                <select class="form-select" id="invMaterial" required></select>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">操作类型 *</label>
+                <select class="form-select" id="invType" required>
+                    <option value="入库">入库</option>
+                    <option value="出库">出库</option>
+                    <option value="盘点调整">盘点调整</option>
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">数量 *</label>
+                <input type="number" class="form-control" id="invQty" step="0.01" min="0" required>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">单号</label>
+                <input type="text" class="form-control" id="invRef">
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">操作员</label>
+                <input type="text" class="form-control" id="invOp">
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">备注</label>
+                <input type="text" class="form-control" id="invRemark">
+            </div>
+            <div class="col-md-2 d-flex align-items-end">
+                <button type="button" class="btn btn-success w-100" onclick="saveInventory()">提交</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <span>物料清单</span>
+        <div class="d-flex gap-2 flex-wrap align-items-center">
+            <select class="form-select form-select-sm" id="filterCategory" style="width:auto;" onchange="loadMaterials()">
+                <option value="">全部分类</option>
+                <option value="木材">木材</option>
+                <option value="油料">油料</option>
+                <option value="绳索">绳索</option>
+                <option value="铁件">铁件</option>
+                <option value="其他">其他</option>
+            </select>
+            <input type="text" class="form-control form-control-sm" id="filterKeyword" style="width:auto;" placeholder="搜索编码/名称" oninput="loadMaterials()">
+            <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" id="filterLowStock" onchange="loadMaterials()">
+                <label class="form-check-label" for="filterLowStock">仅显示库存不足</label>
+            </div>
+        </div>
+    </div>
+    <div class="card-body">
+        <div id="lowStockAlerts" class="mb-3"></div>
+        <table class="table table-sm" id="materialTable">
+            <thead>
+                <tr>
+                    <th>编码</th><th>名称</th><th>分类</th><th>单位</th>
+                    <th>当前库存</th><th>安全库存</th><th>状态</th><th>描述</th><th>操作</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <span>库存流水台账</span>
+        <div class="d-flex gap-2 flex-wrap align-items-center">
+            <select class="form-select form-select-sm" id="logMaterial" style="width:auto;" onchange="loadInventoryLogs()">
+                <option value="">全部物料</option>
+            </select>
+            <select class="form-select form-select-sm" id="logType" style="width:auto;" onchange="loadInventoryLogs()">
+                <option value="">全部类型</option>
+                <option value="入库">入库</option>
+                <option value="出库">出库</option>
+                <option value="盘点调整">盘点调整</option>
+            </select>
+            <input type="date" class="form-control form-control-sm" id="logFromDate" style="width:auto;" onchange="loadInventoryLogs()">
+            <input type="date" class="form-control form-control-sm" id="logToDate" style="width:auto;" onchange="loadInventoryLogs()">
+        </div>
+    </div>
+    <div class="card-body">
+        <table class="table table-sm" id="inventoryLogTable">
+            <thead>
+                <tr>
+                    <th>时间</th><th>物料</th><th>类型</th><th>数量</th>
+                    <th>结存</th><th>单号</th><th>操作员</th><th>备注</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </div>
+</div>
+
+<div class="modal fade" id="materialEditModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">编辑物料</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="editMId">
+                <div class="mb-3">
+                    <label class="form-label">物料编码 *</label>
+                    <input type="text" class="form-control" id="editMCode">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">物料名称 *</label>
+                    <input type="text" class="form-control" id="editMName">
+                </div>
+                <div class="row g-3 mb-3">
+                    <div class="col-md-6">
+                        <label class="form-label">分类 *</label>
+                        <select class="form-select" id="editMCategory">
+                            <option value="木材">木材</option>
+                            <option value="油料">油料</option>
+                            <option value="绳索">绳索</option>
+                            <option value="铁件">铁件</option>
+                            <option value="其他">其他</option>
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">单位 *</label>
+                        <input type="text" class="form-control" id="editMUnit">
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">安全库存</label>
+                        <input type="number" class="form-control" id="editMSafety" step="0.01">
+                    </div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">描述</label>
+                    <input type="text" class="form-control" id="editMDesc">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" onclick="updateMaterial()">保存</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+{% block extra_js %}
+<script>
+const MATERIAL_API = '/api/materials';
+
+let currentMaterials = [];
+let editingId = null;
+
+async function loadMaterials() {
+    const category = document.getElementById('filterCategory').value;
+    const keyword = document.getElementById('filterKeyword').value;
+    const lowStockOnly = document.getElementById('filterLowStock').checked;
+    let url = MATERIAL_API + '?';
+    if (category) url += `category=${category}&`;
+    if (keyword) url += `keyword=${encodeURIComponent(keyword)}&`;
+    if (lowStockOnly) url += `low_stock_only=true&`;
+    const res = await fetch(url);
+    currentMaterials = await res.json();
+    renderMaterials(currentMaterials);
+    updateMaterialSelects();
+    loadLowStockAlerts();
+}
+
+function renderMaterials(materials) {
+    const tbody = document.querySelector('#materialTable tbody');
+    if (!materials.length) {
+        tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted">暂无物料数据</td></tr>';
+        return;
+    }
+    tbody.innerHTML = materials.map(m => {
+        let rowClass = '';
+        let statusBadge = '<span class="badge bg-success">充足</span>';
+        if (m.current_stock <= 0) {
+            rowClass = 'out-of-stock';
+            statusBadge = '<span class="badge bg-danger">缺货</span>';
+        } else if (m.current_stock <= m.safety_stock) {
+            rowClass = 'low-stock';
+            statusBadge = '<span class="badge bg-warning text-dark">不足</span>';
+        }
+        const catColors = { '木材': 'bg-brown', '油料': 'bg-warning', '绳索': 'bg-info', '铁件': 'bg-secondary', '其他': 'bg-light text-dark' };
+        return `
+            <tr class="${rowClass}">
+                <td><code>${m.code}</code></td>
+                <td><strong>${m.name}</strong></td>
+                <td><span class="badge badge-category ${catColors[m.category] || 'bg-secondary'}">${m.category}</span></td>
+                <td>${m.unit}</td>
+                <td><strong>${m.current_stock}</strong></td>
+                <td>${m.safety_stock}</td>
+                <td>${statusBadge}</td>
+                <td><small class="text-muted">${m.description || '-'}</small></td>
+                <td>
+                    <button class="btn btn-sm btn-outline-primary" onclick="editMaterial(${m.id})">编辑</button>
+                    <button class="btn btn-sm btn-outline-danger" onclick="deleteMaterial(${m.id})">删除</button>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+async function loadLowStockAlerts() {
+    const res = await fetch(`${MATERIAL_API}/alerts/low-stock`);
+    const alerts = await res.json();
+    const div = document.getElementById('lowStockAlerts');
+    if (!alerts.length) {
+        div.innerHTML = '<div class="alert alert-success mb-0 py-2"><small>所有物料库存充足</small></div>';
+        return;
+    }
+    div.innerHTML = `
+        <div class="alert alert-warning mb-0 py-2">
+            <strong>库存预警（${alerts.length}项）：</strong>
+            ${alerts.map(a => `<span class="badge bg-danger me-1">${a.material_code} ${a.material_name}: 缺${a.shortage.toFixed(2)}${a.unit}</span>`).join('')}
+        </div>
+    `;
+}
+
+function updateMaterialSelects() {
+    const invSel = document.getElementById('invMaterial');
+    const logSel = document.getElementById('logMaterial');
+    const options = currentMaterials.map(m => `<option value="${m.id}">${m.code} - ${m.name} (${m.current_stock}${m.unit})</option>`).join('');
+    invSel.innerHTML = '<option value="">请选择物料</option>' + options;
+    logSel.innerHTML = '<option value="">全部物料</option>' + options;
+}
+
+async function saveMaterial() {
+    const data = {
+        code: document.getElementById('mCode').value.trim(),
+        name: document.getElementById('mName').value.trim(),
+        category: document.getElementById('mCategory').value,
+        unit: document.getElementById('mUnit').value.trim(),
+        safety_stock: parseFloat(document.getElementById('mSafety').value) || 0,
+        description: document.getElementById('mDesc').value.trim() || null
+    };
+    if (!data.code || !data.name || !data.unit) {
+        alert('请填写必填项');
+        return;
+    }
+    const res = await fetch(MATERIAL_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+    });
+    if (res.ok) {
+        document.getElementById('materialForm').reset();
+        loadMaterials();
+    } else {
+        const err = await res.json();
+        alert(err.detail || '保存失败');
+    }
+}
+
+function editMaterial(id) {
+    const m = currentMaterials.find(x => x.id === id);
+    if (!m) return;
+    editingId = id;
+    document.getElementById('editMId').value = id;
+    document.getElementById('editMCode').value = m.code;
+    document.getElementById('editMName').value = m.name;
+    document.getElementById('editMCategory').value = m.category;
+    document.getElementById('editMUnit').value = m.unit;
+    document.getElementById('editMSafety').value = m.safety_stock;
+    document.getElementById('editMDesc').value = m.description || '';
+    new bootstrap.Modal(document.getElementById('materialEditModal')).show();
+}
+
+async function updateMaterial() {
+    const data = {
+        code: document.getElementById('editMCode').value.trim(),
+        name: document.getElementById('editMName').value.trim(),
+        category: document.getElementById('editMCategory').value,
+        unit: document.getElementById('editMUnit').value.trim(),
+        safety_stock: parseFloat(document.getElementById('editMSafety').value) || 0,
+        description: document.getElementById('editMDesc').value.trim() || null
+    };
+    const res = await fetch(`${MATERIAL_API}/${editingId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+    });
+    if (res.ok) {
+        bootstrap.Modal.getInstance(document.getElementById('materialEditModal')).hide();
+        loadMaterials();
+    } else {
+        const err = await res.json();
+        alert(err.detail || '更新失败');
+    }
+}
+
+async function deleteMaterial(id) {
+    if (!confirm('确定删除此物料？已有库存记录或被任务引用的物料不能删除。')) return;
+    const res = await fetch(`${MATERIAL_API}/${id}`, { method: 'DELETE' });
+    if (res.ok) {
+        loadMaterials();
+    } else {
+        const err = await res.json();
+        alert(err.detail || '删除失败');
+    }
+}
+
+async function saveInventory() {
+    const material_id = parseInt(document.getElementById('invMaterial').value);
+    const quantity = parseFloat(document.getElementById('invQty').value);
+    if (!material_id || !quantity || quantity <= 0) {
+        alert('请选择物料并填写有效数量');
+        return;
+    }
+    const data = {
+        material_id,
+        quantity,
+        record_type: document.getElementById('invType').value,
+        reference_no: document.getElementById('invRef').value.trim() || null,
+        operator: document.getElementById('invOp').value.trim() || null,
+        remark: document.getElementById('invRemark').value.trim() || null
+    };
+    const res = await fetch(`${MATERIAL_API}/inventory`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+    });
+    if (res.ok) {
+        document.getElementById('inventoryForm').reset();
+        loadMaterials();
+        loadInventoryLogs();
+    } else {
+        const err = await res.json();
+        alert(err.detail || '操作失败');
+    }
+}
+
+async function loadInventoryLogs() {
+    const material_id = document.getElementById('logMaterial').value;
+    const record_type = document.getElementById('logType').value;
+    const from_date = document.getElementById('logFromDate').value;
+    const to_date = document.getElementById('logToDate').value;
+    let url = `${MATERIAL_API}/inventory/logs?`;
+    if (material_id) url += `material_id=${material_id}&`;
+    if (record_type) url += `record_type=${record_type}&`;
+    if (from_date) url += `from_date=${from_date}&`;
+    if (to_date) url += `to_date=${to_date}&`;
+    const res = await fetch(url);
+    const logs = await res.json();
+    const tbody = document.querySelector('#inventoryLogTable tbody');
+    if (!logs.length) {
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">暂无记录</td></tr>';
+        return;
+    }
+    const typeColors = { '入库': 'bg-success', '出库': 'bg-danger', '盘点调整': 'bg-info' };
+    tbody.innerHTML = logs.map(l => `
+        <tr>
+            <td>${formatDT(l.record_time)}</td>
+            <td><code>${l.material_code}</code> ${l.material_name}</td>
+            <td><span class="badge ${typeColors[l.record_type] || 'bg-secondary'}">${l.record_type}</span></td>
+            <td class="${l.quantity >= 0 ? 'text-success' : 'text-danger'}"><strong>${l.quantity >= 0 ? '+' : ''}${l.quantity}</strong></td>
+            <td>${l.balance_after}</td>
+            <td><small>${l.reference_no || '-'}</small></td>
+            <td><small>${l.operator || '-'}</small></td>
+            <td><small class="text-muted">${l.remark || '-'}</small></td>
+        </tr>
+    `).join('');
+}
+
+function formatDT(dt) {
+    if (!dt) return '-';
+    const d = new Date(dt);
+    const pad = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+(async function init() {
+    const today = new Date();
+    const lastWeek = new Date(today); lastWeek.setDate(lastWeek.getDate() - 7);
+    document.getElementById('logFromDate').value = lastWeek.toISOString().slice(0, 10);
+    document.getElementById('logToDate').value = today.toISOString().slice(0, 10);
+    await loadMaterials();
+    loadInventoryLogs();
+})();
+</script>
+{% endblock %}

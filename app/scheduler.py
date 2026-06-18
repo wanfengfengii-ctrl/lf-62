@@ -10,6 +10,164 @@ EXIT_BUFFER_HOURS = 0.25
 MAX_BACKTRACK_ATTEMPTS = 50
 
 
+def get_material_current_stock(db: Session, material_id: int) -> float:
+    latest = (
+        db.query(models.MaterialInventory)
+        .filter(models.MaterialInventory.material_id == material_id)
+        .order_by(models.MaterialInventory.record_time.desc(), models.MaterialInventory.id.desc())
+        .first()
+    )
+    return latest.balance_after if latest else 0.0
+
+
+def get_ship_total_material_requirements(db: Session, ship_id: int) -> Dict[int, float]:
+    tasks = db.query(models.RepairTask).filter(models.RepairTask.ship_id == ship_id).all()
+    if not tasks:
+        return {}
+    task_ids = [t.id for t in tasks]
+    reqs = db.query(models.TaskMaterialRequirement).filter(
+        models.TaskMaterialRequirement.task_id.in_(task_ids)
+    ).all()
+    result: Dict[int, float] = defaultdict(float)
+    for r in reqs:
+        result[r.material_id] += r.quantity
+    return dict(result)
+
+
+def get_ship_total_labor_requirements(db: Session, ship_id: int) -> Dict[str, float]:
+    tasks = db.query(models.RepairTask).filter(models.RepairTask.ship_id == ship_id).all()
+    if not tasks:
+        return {}
+    task_ids = [t.id for t in tasks]
+    reqs = db.query(models.TaskLaborRequirement).filter(
+        models.TaskLaborRequirement.task_id.in_(task_ids)
+    ).all()
+    result: Dict[str, float] = defaultdict(float)
+    for r in reqs:
+        result[r.crew_type] += r.required_hours
+    return dict(result)
+
+
+def check_material_sufficiency(
+    db: Session,
+    material_requirements: Dict[int, float],
+    exclude_schedule_ids: Optional[List[int]] = None
+) -> Tuple[bool, List[str]]:
+    if not material_requirements:
+        return True, []
+    issues = []
+    for material_id, required_qty in material_requirements.items():
+        material = db.query(models.Material).filter(models.Material.id == material_id).first()
+        if not material:
+            issues.append(f"物料ID {material_id} 不存在")
+            continue
+        current_stock = get_material_current_stock(db, material_id)
+        confirmed_qty = get_confirmed_material_quantity(db, material_id, exclude_schedule_ids)
+        available = current_stock - confirmed_qty
+        if available < required_qty:
+            shortage = required_qty - available
+            issues.append(
+                f"物料[{material.code} {material.name}]不足：需要{required_qty}{material.unit}，"
+                f"现有{current_stock}{material.unit}，已被其他排程占用{confirmed_qty}{material.unit}，"
+                f"短缺{round(shortage, 2)}{material.unit}"
+            )
+    return len(issues) == 0, issues
+
+
+def get_confirmed_material_quantity(
+    db: Session,
+    material_id: int,
+    exclude_schedule_ids: Optional[List[int]] = None
+) -> float:
+    q = db.query(models.MaterialConsumption).filter(
+        models.MaterialConsumption.material_id == material_id
+    ).join(models.Schedule).filter(
+        models.Schedule.status == "confirmed"
+    )
+    if exclude_schedule_ids:
+        q = q.filter(~models.Schedule.id.in_(exclude_schedule_ids))
+    consumptions = q.all()
+    return sum(c.actual_quantity if c.actual_quantity is not None else c.planned_quantity for c in consumptions)
+
+
+def check_labor_sufficiency(
+    db: Session,
+    labor_requirements: Dict[str, float],
+    start_date: date,
+    end_date: date,
+    exclude_schedule_ids: Optional[List[int]] = None
+) -> Tuple[bool, List[str]]:
+    if not labor_requirements:
+        return True, []
+    issues = []
+    for crew_type, required_hours in labor_requirements.items():
+        crews = db.query(models.Crew).filter(models.Crew.crew_type == crew_type).all()
+        if not crews:
+            issues.append(f"没有【{crew_type}】班组，需配置相应班组")
+            continue
+        crew_ids = [c.id for c in crews]
+        avail_records = db.query(models.CrewDailyAvailability).filter(
+            models.CrewDailyAvailability.crew_id.in_(crew_ids),
+            models.CrewDailyAvailability.work_date >= start_date,
+            models.CrewDailyAvailability.work_date <= end_date
+        ).all()
+        total_available = sum(max(0, r.available_hours - r.used_hours) for r in avail_records)
+        confirmed_used = get_confirmed_labor_hours(db, crew_type, start_date, end_date, exclude_schedule_ids)
+        remaining = total_available - confirmed_used
+        if remaining < required_hours:
+            shortage = required_hours - remaining
+            issues.append(
+                f"【{crew_type}】工时不足：需要{required_hours}小时，"
+                f"排班可用{total_available}小时，已被其他排程占用{confirmed_used}小时，"
+                f"短缺{round(shortage, 2)}小时"
+            )
+    return len(issues) == 0, issues
+
+
+def get_confirmed_labor_hours(
+    db: Session,
+    crew_type: str,
+    start_date: date,
+    end_date: date,
+    exclude_schedule_ids: Optional[List[int]] = None
+) -> float:
+    confirmed_schedules = db.query(models.Schedule).filter(
+        models.Schedule.status == "confirmed",
+        models.Schedule.exit_time >= datetime.combine(start_date, datetime.min.time()),
+        models.Schedule.enter_time <= datetime.combine(end_date, datetime.max.time())
+    )
+    if exclude_schedule_ids:
+        confirmed_schedules = confirmed_schedules.filter(~models.Schedule.id.in_(exclude_schedule_ids))
+    confirmed_schedules = confirmed_schedules.all()
+    total = 0.0
+    for s in confirmed_schedules:
+        ship_id = s.ship_id
+        labor_reqs = get_ship_total_labor_requirements(db, ship_id)
+        total += labor_reqs.get(crew_type, 0)
+    return total
+
+
+def check_schedule_resources(
+    db: Session,
+    ship_id: int,
+    start_date: date,
+    end_date: date,
+    exclude_schedule_ids: Optional[List[int]] = None
+) -> Tuple[bool, List[str]]:
+    all_issues: List[str] = []
+    material_reqs = get_ship_total_material_requirements(db, ship_id)
+    if material_reqs:
+        ok, mat_issues = check_material_sufficiency(db, material_reqs, exclude_schedule_ids)
+        if not ok:
+            all_issues.extend(mat_issues)
+    labor_reqs = get_ship_total_labor_requirements(db, ship_id)
+    if labor_reqs:
+        ok, labor_issues = check_labor_sufficiency(db, labor_reqs, start_date, end_date, exclude_schedule_ids)
+        if not ok:
+            all_issues.extend(labor_issues)
+    return len(all_issues) == 0, all_issues
+
+
 def parse_tide_time(tide_date: date, time_str: str) -> datetime:
     h, m = map(int, time_str.split(":"))
     return datetime.combine(tide_date, datetime.min.time()).replace(hour=h, minute=m)
@@ -121,13 +279,18 @@ def _try_schedule_ship(
     to_date: date,
     existing_schedules: List[Dict],
     tides: List[models.Tide],
-    prefer_early: bool = True
+    prefer_early: bool = True,
+    exclude_schedule_ids: Optional[List[int]] = None
 ) -> Optional[Dict]:
     required_level = max(ship.draft, dock.min_water_level)
     durations = get_process_durations(db, ship.id)
     total_process_hours = durations["排水"] + durations["修补"] + durations["上油"]
 
     if total_process_hours <= 0:
+        return None
+
+    resource_ok, resource_issues = check_schedule_resources(db, ship.id, from_date, to_date, exclude_schedule_ids)
+    if not resource_ok:
         return None
 
     enter_windows = find_water_windows(tides, required_level)
@@ -242,6 +405,15 @@ def _build_unassigned_reason(
 
     if total_process_hours <= 0:
         return "未配置修船工序（排水+修补+上油总时长为0）"
+
+    from app.database import SessionLocal
+    db = SessionLocal()
+    try:
+        resource_ok, resource_issues = check_schedule_resources(db, ship.id, from_date, to_date)
+        if not resource_ok:
+            reasons.append("资源校验失败：" + "；".join(resource_issues))
+    finally:
+        db.close()
 
     process_detail = f"（排水{durations['排水']}h+修补{durations['修补']}h+上油{durations['上油']}h，共{total_process_hours}h）"
 
@@ -371,6 +543,20 @@ def _try_with_backtracking(
                 "ship_code": ship.code,
                 "ship_name": ship.name,
                 "reason": "未配置修船工序（排水+修补+上油总时长为0）"
+            })
+            continue
+
+        existing_confirmed = db.query(models.Schedule).filter(
+            models.Schedule.ship_id == ship.id,
+            models.Schedule.status == "confirmed"
+        ).first()
+        if existing_confirmed:
+            dock_code = existing_confirmed.dock.code if existing_confirmed.dock else "?"
+            unassigned.append({
+                "ship_id": ship.id,
+                "ship_code": ship.code,
+                "ship_name": ship.name,
+                "reason": f"该船只已有正式排程（船坞{dock_code}，{existing_confirmed.enter_time.strftime('%Y-%m-%d')}），请先删除原有排程后再试"
             })
             continue
 

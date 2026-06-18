@@ -790,14 +790,15 @@ async function confirmSingleSchedule(scheduleId) {
 
     if (!confirm(`确认将 ${schedule.ship_code} 的排程确认为正式排程？`)) return;
 
-    const res = await fetch(`${SCHEDULE_API}/confirm-drafts`, { method: 'POST' });
-    if (res.ok) {
-        const result = await res.json();
-        alert(`确认完成`);
+    const res = await fetch(`${SCHEDULE_API}/confirm/${scheduleId}`, { method: 'POST' });
+    const result = await res.json();
+    if (res.ok && result.success) {
+        alert(`确认成功！${schedule.ship_code} 的排程已确认为正式排程`);
         loadSchedules();
         bootstrap.Modal.getInstance(document.getElementById('scheduleDetailModal')).hide();
     } else {
-        alert('确认失败');
+        alert('确认失败：' + (result.error || result.detail || '未知错误'));
+        loadSchedules();
     }
 }
 
