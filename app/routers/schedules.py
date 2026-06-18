@@ -42,6 +42,7 @@ class ScheduleOut(BaseModel):
     exit_time: datetime
     status: str
     created_at: datetime
+    durations: Optional[dict] = None
 
     class Config:
         from_attributes = True
@@ -56,6 +57,7 @@ def list_schedules(db: Session = Depends(get_db)):
     )
     result = []
     for s in schedules:
+        durations = scheduler.get_process_durations(db, s.ship_id)
         result.append({
             "id": s.id,
             "ship_id": s.ship_id,
@@ -71,6 +73,7 @@ def list_schedules(db: Session = Depends(get_db)):
             "exit_time": s.exit_time,
             "status": s.status,
             "created_at": s.created_at,
+            "durations": durations,
         })
     return result
 
@@ -96,8 +99,18 @@ def save_schedule(data: ScheduleSaveIn, db: Session = Depends(get_db)):
 
     required_level = max(ship.draft, dock.min_water_level)
     from datetime import timedelta as _td
+    enter_date = data.enter_time.date()
+    exit_date = data.exit_time.date()
+
+    complete, issues = scheduler.check_tide_data_complete(db, enter_date, exit_date)
+    if not complete:
+        raise HTTPException(
+            status_code=400,
+            detail="潮位数据缺失，不能生成正式排程：" + "；".join(issues)
+        )
+
     tides_in_range = scheduler.get_sorted_tides(
-        db, data.enter_time.date() - _td(days=1), data.exit_time.date() + _td(days=1)
+        db, enter_date - _td(days=1), exit_date + _td(days=1)
     )
     if len(tides_in_range) < 2:
         raise HTTPException(status_code=400, detail="潮位数据缺失，不能生成正式排程")
@@ -158,6 +171,7 @@ def save_schedule(data: ScheduleSaveIn, db: Session = Depends(get_db)):
         "exit_time": schedule.exit_time,
         "status": schedule.status,
         "created_at": schedule.created_at,
+        "durations": durations,
     }
 
 

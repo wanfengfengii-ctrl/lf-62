@@ -81,6 +81,7 @@ async function loadTasks() {
         <tr>
             <td>${ship.code}</td><td>${ship.name}</td><td>${t.process_type}</td><td>${t.duration_hours}</td>
             <td>
+                <button class="btn btn-sm btn-outline-primary me-1" onclick='editTask(${JSON.stringify(t)})'>编辑</button>
                 <button class="btn btn-sm btn-outline-danger" onclick="deleteTask(${t.id})">删除</button>
             </td>
         </tr>`;
@@ -94,6 +95,15 @@ function resetForm() {
     document.getElementById('formError').textContent = '';
 }
 
+function editTask(task) {
+    document.getElementById('taskId').value = task.id;
+    document.getElementById('taskShip').value = task.ship_id;
+    document.getElementById('taskType').value = task.process_type;
+    document.getElementById('taskDuration').value = task.duration_hours;
+    document.getElementById('submitBtn').textContent = '保存';
+    document.getElementById('formError').textContent = '';
+}
+
 async function deleteTask(id) {
     if (!confirm('确定删除此任务？相关排程将标记为草稿。')) return;
     await fetch(`${TASK_API}/${id}`, { method: 'DELETE' });
@@ -102,6 +112,7 @@ async function deleteTask(id) {
 
 document.getElementById('taskForm').addEventListener('submit', async (e) => {
     e.preventDefault();
+    const id = document.getElementById('taskId').value;
     const ship_id = parseInt(document.getElementById('taskShip').value);
     const process_type = document.getElementById('taskType').value;
     const duration_hours = parseFloat(document.getElementById('taskDuration').value);
@@ -111,8 +122,10 @@ document.getElementById('taskForm').addEventListener('submit', async (e) => {
         return;
     }
 
-    const res = await fetch(TASK_API, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+    const url = id ? `${TASK_API}/${id}` : TASK_API;
+    const method = id ? 'PUT' : 'POST';
+    const res = await fetch(url, {
+        method, headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ship_id, process_type, duration_hours })
     });
     if (res.ok) {

@@ -85,33 +85,40 @@ def get_process_durations(db: Session, ship_id: int) -> Dict[str, float]:
     return result
 
 
-def generate_schedule(
-    db: Session,
-    ship_id: int,
+def _docks_overlap(
+    enter1: datetime, exit1: datetime,
+    enter2: datetime, exit2: datetime
+) -> bool:
+    return enter1 < exit2 and enter2 < exit1
+
+
+def _check_dock_conflict(
     dock_id: int,
+    enter_time: datetime,
+    exit_time: datetime,
+    existing_schedules: List[Dict]
+) -> Optional[Dict]:
+    for s in existing_schedules:
+        if s["dock_id"] == dock_id and _docks_overlap(enter_time, exit_time, s["enter_time"], s["exit_time"]):
+            return s
+    return None
+
+
+def _try_schedule_ship(
+    db: Session,
+    ship: models.Ship,
+    dock: models.Dock,
     from_date: date,
-    to_date: date
-) -> Dict:
-    ship = db.query(models.Ship).filter(models.Ship.id == ship_id).first()
-    dock = db.query(models.Dock).filter(models.Dock.id == dock_id).first()
-
-    if not ship or not dock:
-        return {"success": False, "error": "船只或船坞不存在"}
-
+    to_date: date,
+    existing_schedules: List[Dict],
+    tides: List[models.Tide]
+) -> Optional[Dict]:
     required_level = max(ship.draft, dock.min_water_level)
-    durations = get_process_durations(db, ship_id)
+    durations = get_process_durations(db, ship.id)
     total_process_hours = durations["排水"] + durations["修补"] + durations["上油"]
 
     if total_process_hours <= 0:
-        return {"success": False, "error": "修船工序总时长必须大于0，请先配置修船任务"}
-
-    complete, issues = check_tide_data_complete(db, from_date, to_date)
-    if not complete:
-        return {"success": False, "error": "潮位数据缺失", "issues": issues}
-
-    tides = get_sorted_tides(db, from_date, to_date)
-    if len(tides) < 2:
-        return {"success": False, "error": "潮位数据不足"}
+        return None
 
     enter_windows = find_water_windows(tides, required_level)
 
@@ -128,11 +135,17 @@ def generate_schedule(
 
         if exit_windows:
             exit_time = exit_windows[0][0]
+
+            conflict = _check_dock_conflict(dock.id, enter_time, exit_time, existing_schedules)
+            if conflict:
+                continue
+
             return {
                 "success": True,
                 "ship_id": ship.id,
                 "ship_code": ship.code,
                 "ship_name": ship.name,
+                "ship_priority": ship.priority,
                 "dock_id": dock.id,
                 "dock_code": dock.code,
                 "dock_name": dock.name,
@@ -145,7 +158,190 @@ def generate_schedule(
                 "required_level": required_level
             }
 
-    return {"success": False, "error": "在指定日期范围内未找到满足条件的进出坞时间窗口"}
+    return None
+
+
+def batch_generate_schedule(
+    db: Session,
+    ship_ids: List[int],
+    dock_ids: List[int],
+    from_date: date,
+    to_date: date
+) -> Dict:
+    if from_date > to_date:
+        return {"success": False, "error": "起始日期不能晚于结束日期"}
+
+    ships = db.query(models.Ship).filter(models.Ship.id.in_(ship_ids)).all()
+    docks = db.query(models.Dock).filter(models.Dock.id.in_(dock_ids)).all()
+
+    if not ships:
+        return {"success": False, "error": "未找到指定船只"}
+    if not docks:
+        return {"success": False, "error": "未找到指定船坞"}
+
+    ships_sorted = sorted(ships, key=lambda s: (-s.priority, s.id))
+
+    complete, issues = check_tide_data_complete(db, from_date, to_date)
+    if not complete:
+        return {"success": False, "error": "潮位数据缺失", "issues": issues}
+
+    tides = get_sorted_tides(db, from_date - timedelta(days=1), to_date + timedelta(days=1))
+    if len(tides) < 2:
+        return {"success": False, "error": "潮位数据不足"}
+
+    scheduled = []
+    unassigned = []
+    existing_schedules = []
+
+    confirmed_schedules = (
+        db.query(models.Schedule)
+        .filter(models.Schedule.status == "confirmed")
+        .all()
+    )
+    for cs in confirmed_schedules:
+        existing_schedules.append({
+            "dock_id": cs.dock_id,
+            "enter_time": cs.enter_time,
+            "exit_time": cs.exit_time,
+            "ship_id": cs.ship_id,
+            "ship_code": cs.ship.code if cs.ship else "",
+            "dock_code": cs.dock.code if cs.dock else "",
+        })
+
+    for ship in ships_sorted:
+        durations = get_process_durations(db, ship.id)
+        total_process_hours = durations["排水"] + durations["修补"] + durations["上油"]
+
+        if total_process_hours <= 0:
+            unassigned.append({
+                "ship_id": ship.id,
+                "ship_code": ship.code,
+                "ship_name": ship.name,
+                "reason": "未配置修船工序（排水+修补+上油总时长为0）"
+            })
+            continue
+
+        best_result = None
+        best_enter_time = None
+
+        for dock in docks:
+            result = _try_schedule_ship(db, ship, dock, from_date, to_date, existing_schedules, tides)
+            if result:
+                if best_result is None or result["enter_time"] < best_enter_time:
+                    best_result = result
+                    best_enter_time = result["enter_time"]
+
+        if best_result:
+            scheduled.append(best_result)
+            existing_schedules.append({
+                "dock_id": best_result["dock_id"],
+                "enter_time": best_result["enter_time"],
+                "exit_time": best_result["exit_time"],
+                "ship_id": best_result["ship_id"],
+                "ship_code": best_result["ship_code"],
+                "dock_code": best_result["dock_code"],
+            })
+        else:
+            required_level = max(ship.draft, min(d.min_water_level for d in docks))
+            reasons = []
+            if not find_water_windows(tides, required_level):
+                reasons.append("在指定日期范围内无满足水位要求的进出坞窗口")
+            else:
+                reasons.append("所有船坞在可用时间段内均存在冲突，无法安排")
+            reasons.append(f"要求水位 ≥ {required_level}m（吃水{ship.draft}m）")
+            unassigned.append({
+                "ship_id": ship.id,
+                "ship_code": ship.code,
+                "ship_name": ship.name,
+                "reason": "；".join(reasons)
+            })
+
+    return {
+        "success": True,
+        "scheduled": scheduled,
+        "unassigned": unassigned,
+        "total_ships": len(ships_sorted),
+        "scheduled_count": len(scheduled),
+        "unassigned_count": len(unassigned)
+    }
+
+
+def generate_schedule(
+    db: Session,
+    ship_id: int,
+    dock_id: int,
+    from_date: date,
+    to_date: date
+) -> Dict:
+    result = batch_generate_schedule(db, [ship_id], [dock_id], from_date, to_date)
+    if not result["success"]:
+        return result
+    if result["scheduled"]:
+        return result["scheduled"][0]
+    if result["unassigned"]:
+        u = result["unassigned"][0]
+        return {"success": False, "error": u["reason"]}
+    return {"success": False, "error": "排程生成失败"}
+
+
+def auto_recalculate_schedules(db: Session) -> Dict:
+    draft_schedules = db.query(models.Schedule).filter(models.Schedule.status == "draft").all()
+
+    if not draft_schedules:
+        return {"recalculated": 0, "failed": 0, "unchanged": 0}
+
+    ship_ids = list(set(s.ship_id for s in draft_schedules))
+    dock_ids = list(set(s.dock_id for s in draft_schedules))
+    if not ship_ids or not dock_ids:
+        return {"recalculated": 0, "failed": 0, "unchanged": 0}
+
+    min_enter = min(s.enter_time for s in draft_schedules)
+    max_exit = max(s.exit_time for s in draft_schedules)
+    from_date = min_enter.date() - timedelta(days=1)
+    to_date = max_exit.date() + timedelta(days=1)
+
+    for s in draft_schedules:
+        db.delete(s)
+    db.flush()
+
+    result = batch_generate_schedule(db, ship_ids, dock_ids, from_date, to_date)
+
+    recalculated = 0
+    failed = 0
+    for item in result.get("scheduled", []):
+        schedule = models.Schedule(
+            ship_id=item["ship_id"],
+            dock_id=item["dock_id"],
+            enter_time=item["enter_time"],
+            start_drain_time=item["start_drain_time"],
+            start_repair_time=item["start_repair_time"],
+            start_oil_time=item.get("start_oil_time"),
+            exit_time=item["exit_time"],
+            status="draft",
+            conflict_reason=None,
+            created_at=datetime.now()
+        )
+        db.add(schedule)
+        recalculated += 1
+
+    for item in result.get("unassigned", []):
+        schedule = models.Schedule(
+            ship_id=item["ship_id"],
+            dock_id=0,
+            enter_time=datetime.now(),
+            start_drain_time=datetime.now(),
+            start_repair_time=datetime.now(),
+            start_oil_time=None,
+            exit_time=datetime.now(),
+            status="conflict",
+            conflict_reason=item["reason"],
+            created_at=datetime.now()
+        )
+        db.add(schedule)
+        failed += 1
+
+    db.commit()
+    return {"recalculated": recalculated, "failed": failed, "unchanged": 0}
 
 
 def get_water_level_at(tides: List[models.Tide], target_dt: datetime) -> Optional[float]:

@@ -10,6 +10,7 @@ class Ship(Base):
     code = Column(String, unique=True, index=True, nullable=False)
     name = Column(String, nullable=False)
     draft = Column(Float, nullable=False)
+    priority = Column(Integer, nullable=False, default=0)
 
     tasks = relationship("RepairTask", back_populates="ship", cascade="all, delete-orphan")
     schedules = relationship("Schedule", back_populates="ship", cascade="all, delete-orphan")
@@ -65,6 +66,7 @@ class Schedule(Base):
     start_oil_time = Column(DateTime)
     exit_time = Column(DateTime, nullable=False)
     status = Column(String, nullable=False, default="draft")
+    conflict_reason = Column(String, nullable=True)
     created_at = Column(DateTime, nullable=False)
 
     ship = relationship("Ship", back_populates="schedules")
