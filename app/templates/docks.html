@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block title %}船坞管理{% endblock %}
+{% block content %}
+<h2>船坞管理</h2>
+<div class="card mb-4">
+    <div class="card-header">新增/编辑船坞</div>
+    <div class="card-body">
+        <form id="dockForm" class="row g-3">
+            <input type="hidden" id="dockId">
+            <div class="col-md-3">
+                <label class="form-label">船坞编号 *</label>
+                <input type="text" class="form-control" id="dockCode" required>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">船坞名称 *</label>
+                <input type="text" class="form-control" id="dockName" required>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">最低水位要求(米) *</label>
+                <input type="number" step="0.01" min="0.01" class="form-control" id="dockMinLevel" required>
+            </div>
+            <div class="col-md-2 d-flex align-items-end">
+                <button type="submit" class="btn btn-primary me-2" id="submitBtn">添加</button>
+                <button type="button" class="btn btn-secondary" id="resetBtn">重置</button>
+            </div>
+        </form>
+        <div id="formError" class="form-error mt-2"></div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">船坞列表</div>
+    <div class="card-body">
+        <table class="table table-striped">
+            <thead>
+                <tr>
+                    <th>编号</th><th>名称</th><th>最低水位要求(米)</th><th>操作</th>
+                </tr>
+            </thead>
+            <tbody id="dockTableBody"></tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+{% block extra_js %}
+<script>
+const API_URL = '/api/docks';
+
+async function loadDocks() {
+    const res = await fetch(API_URL);
+    const docks = await res.json();
+    const tbody = document.getElementById('dockTableBody');
+    tbody.innerHTML = docks.map(d => `
+        <tr>
+            <td>${d.code}</td><td>${d.name}</td><td>${d.min_water_level}</td>
+            <td>
+                <button class="btn btn-sm btn-outline-primary" onclick='editDock(${JSON.stringify(d)})'>编辑</button>
+                <button class="btn btn-sm btn-outline-danger" onclick="deleteDock(${d.id})">删除</button>
+            </td>
+        </tr>
+    `).join('');
+}
+
+function resetForm() {
+    document.getElementById('dockForm').reset();
+    document.getElementById('dockId').value = '';
+    document.getElementById('submitBtn').textContent = '添加';
+    document.getElementById('formError').textContent = '';
+}
+
+function editDock(dock) {
+    document.getElementById('dockId').value = dock.id;
+    document.getElementById('dockCode').value = dock.code;
+    document.getElementById('dockName').value = dock.name;
+    document.getElementById('dockMinLevel').value = dock.min_water_level;
+    document.getElementById('submitBtn').textContent = '保存';
+    document.getElementById('formError').textContent = '';
+}
+
+async function deleteDock(id) {
+    if (!confirm('确定删除此船坞？相关排程将一并删除。')) return;
+    await fetch(`${API_URL}/${id}`, { method: 'DELETE' });
+    loadDocks();
+}
+
+document.getElementById('dockForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const id = document.getElementById('dockId').value;
+    const data = {
+        code: document.getElementById('dockCode').value.trim(),
+        name: document.getElementById('dockName').value.trim(),
+        min_water_level: parseFloat(document.getElementById('dockMinLevel').value)
+    };
+    if (!data.code || !data.name || !(data.min_water_level > 0)) {
+        document.getElementById('formError').textContent = '请正确填写所有必填项（最低水位必须大于0）';
+        return;
+    }
+    const url = id ? `${API_URL}/${id}` : API_URL;
+    const method = id ? 'PUT' : 'POST';
+    const res = await fetch(url, {
+        method, headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+    });
+    if (res.ok) {
+        resetForm();
+        loadDocks();
+    } else {
+        const err = await res.json();
+        document.getElementById('formError').textContent = err.detail || '操作失败';
+    }
+});
+
+document.getElementById('resetBtn').addEventListener('click', resetForm);
+loadDocks();
+</script>
+{% endblock %}

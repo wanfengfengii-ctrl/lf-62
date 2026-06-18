@@ -1,0 +1,294 @@
+{% extends "base.html" %}
+{% block title %}修船排程甘特图{% endblock %}
+{% block content %}
+<h2>修船排程甘特图</h2>
+
+<div class="card mb-4">
+    <div class="card-header">生成新排程</div>
+    <div class="card-body">
+        <form id="scheduleForm" class="row g-3">
+            <div class="col-md-3">
+                <label class="form-label">选择船只 *</label>
+                <select class="form-select" id="shipSelect" required>
+                    <option value="">请选择...</option>
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">选择船坞 *</label>
+                <select class="form-select" id="dockSelect" required>
+                    <option value="">请选择...</option>
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">起始日期 *</label>
+                <input type="date" class="form-control" id="fromDate" required>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">结束日期 *</label>
+                <input type="date" class="form-control" id="toDate" required>
+            </div>
+            <div class="col-md-2 d-flex align-items-end">
+                <button type="button" class="btn btn-primary" onclick="previewSchedule()">预览排程</button>
+            </div>
+        </form>
+        <div id="previewError" class="form-error mt-2"></div>
+    </div>
+</div>
+
+<div id="previewSection" class="card mb-4" style="display:none;">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <span>排程预览</span>
+        <button type="button" class="btn btn-success btn-sm" onclick="saveSchedule()">确认并保存为正式排程</button>
+    </div>
+    <div class="card-body">
+        <div id="previewInfo" class="mb-3"></div>
+        <div id="ganttChart" style="width:100%;height:400px;"></div>
+        <div id="tideChart" style="width:100%;height:300px;" class="mt-4"></div>
+    </div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <span>已保存排程</span>
+        <button type="button" class="btn btn-outline-danger btn-sm" onclick="clearInvalid()">清除草稿排程</button>
+    </div>
+    <div class="card-body">
+        <div id="savedGantt" style="width:100%;height:400px;"></div>
+        <table class="table table-sm mt-3" id="scheduleTable">
+            <thead>
+                <tr>
+                    <th>船只</th><th>船坞</th><th>进坞</th><th>出坞</th><th>状态</th><th>操作</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+{% block extra_js %}
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<script>
+const SCHEDULE_API = '/api/schedules';
+const SHIP_API = '/api/ships';
+const DOCK_API = '/api/docks';
+const TIDE_API = '/api/tides';
+
+let currentPreview = null;
+let shipMap = {}, dockMap = {};
+
+async function loadSelects() {
+    const [ships, docks] = await Promise.all([
+        fetch(SHIP_API).then(r => r.json()),
+        fetch(DOCK_API).then(r => r.json())
+    ]);
+    const shipSel = document.getElementById('shipSelect');
+    const dockSel = document.getElementById('dockSelect');
+    shipSel.innerHTML = '<option value="">请选择...</option>';
+    dockSel.innerHTML = '<option value="">请选择...</option>';
+    ships.forEach(s => { shipMap[s.id] = s; shipSel.innerHTML += `<option value="${s.id}">${s.code} - ${s.name} (吃水${s.draft}m)</option>`; });
+    docks.forEach(d => { dockMap[d.id] = d; dockSel.innerHTML += `<option value="${d.id}">${d.code} - ${d.name} (最低${d.min_water_level}m)</option>`; });
+    const today = new Date();
+    const nextWeek = new Date(today); nextWeek.setDate(nextWeek.getDate() + 7);
+    document.getElementById('fromDate').value = today.toISOString().slice(0, 10);
+    document.getElementById('toDate').value = nextWeek.toISOString().slice(0, 10);
+}
+
+async function previewSchedule() {
+    document.getElementById('previewError').textContent = '';
+    const ship_id = parseInt(document.getElementById('shipSelect').value);
+    const dock_id = parseInt(document.getElementById('dockSelect').value);
+    const from_date = document.getElementById('fromDate').value;
+    const to_date = document.getElementById('toDate').value;
+    if (!ship_id || !dock_id || !from_date || !to_date) {
+        document.getElementById('previewError').textContent = '请完整填写所有字段';
+        return;
+    }
+    const res = await fetch(`${SCHEDULE_API}/preview`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ship_id, dock_id, from_date, to_date })
+    });
+    if (!res.ok) {
+        const err = await res.json();
+        document.getElementById('previewError').textContent = err.detail || '排程生成失败';
+        return;
+    }
+    currentPreview = await res.json();
+    renderPreview(currentPreview);
+    renderTideChart(currentPreview);
+}
+
+function renderPreview(data) {
+    document.getElementById('previewSection').style.display = 'block';
+    const ship = shipMap[data.ship_id];
+    const dock = dockMap[data.dock_id];
+    document.getElementById('previewInfo').innerHTML = `
+        <div class="row">
+            <div class="col-md-6">
+                <strong>船只：</strong>${data.ship_code} - ${data.ship_name}（吃水深度 ${ship ? ship.draft : '?'}m）<br>
+                <strong>船坞：</strong>${data.dock_code} - ${data.dock_name}（最低水位 ${dock ? dock.min_water_level : '?'}m）<br>
+                <strong>要求水位：</strong>${data.required_level}m
+            </div>
+            <div class="col-md-6">
+                <strong>进坞时间：</strong>${formatDT(data.enter_time)}<br>
+                <strong>排水：</strong>${formatDT(data.start_drain_time)} (${data.durations['排水']}h)<br>
+                <strong>修补：</strong>${formatDT(data.start_repair_time)} (${data.durations['修补']}h)<br>
+                ${data.start_oil_time ? `<strong>上油：</strong>${formatDT(data.start_oil_time)} (${data.durations['上油']}h)<br>` : ''}
+                <strong>出坞时间：</strong>${formatDT(data.exit_time)}
+            </div>
+        </div>
+    `;
+    renderGantt([data], 'ganttChart', '排程预览 - ' + data.ship_code);
+}
+
+async function saveSchedule() {
+    if (!currentPreview) return;
+    if (!confirm('确认保存此排程？同船只的旧排程将被替换。')) return;
+    const res = await fetch(SCHEDULE_API, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(currentPreview)
+    });
+    if (res.ok) {
+        alert('保存成功！');
+        loadSchedules();
+    } else {
+        const err = await res.json();
+        alert('保存失败：' + (err.detail || ''));
+    }
+}
+
+async function loadSchedules() {
+    const res = await fetch(SCHEDULE_API);
+    const schedules = await res.json();
+    renderGantt(schedules, 'savedGantt', '已保存排程总览');
+    const tbody = document.querySelector('#scheduleTable tbody');
+    tbody.innerHTML = schedules.map(s => `
+        <tr>
+            <td>${s.ship_code} - ${s.ship_name}</td>
+            <td>${s.dock_code} - ${s.dock_name}</td>
+            <td>${formatDT(s.enter_time)}</td>
+            <td>${formatDT(s.exit_time)}</td>
+            <td>${s.status === 'confirmed' ? '<span class="badge bg-success">已确认</span>' : '<span class="badge bg-secondary">草稿</span>'}</td>
+            <td><button class="btn btn-sm btn-outline-danger" onclick="deleteSchedule(${s.id})">删除</button></td>
+        </tr>
+    `).join('') || '<tr><td colspan="6" class="text-center text-muted">暂无已保存排程</td></tr>';
+}
+
+async function deleteSchedule(id) {
+    if (!confirm('确定删除？')) return;
+    await fetch(`${SCHEDULE_API}/${id}`, { method: 'DELETE' });
+    loadSchedules();
+}
+
+async function clearInvalid() {
+    if (!confirm('确定清除所有草稿排程？')) return;
+    await fetch(`${SCHEDULE_API}/all/invalid`, { method: 'DELETE' });
+    loadSchedules();
+}
+
+function renderGantt(schedules, divId, title) {
+    if (!schedules.length) {
+        Plotly.newPlot(divId, [], { title: title + '（暂无数据）' });
+        return;
+    }
+    const colors = { '进坞': '#0d6efd', '排水': '#6f42c1', '修补': '#fd7e14', '上油': '#198754', '等待出坞': '#adb5bd' };
+    const data = [];
+    const legendAdded = {};
+    schedules.forEach((s) => {
+        const ship = s.ship_code || (shipMap[s.ship_id] ? shipMap[s.ship_id].code : '船' + s.ship_id);
+        const label = ship + ' / ' + (s.dock_code || (dockMap[s.dock_id] ? dockMap[s.dock_id].code : '坞' + s.dock_id));
+        addBar(data, label, '进坞', s.enter_time, s.start_drain_time, colors['进坞'], legendAdded);
+        addBar(data, label, '排水', s.start_drain_time, s.start_repair_time, colors['排水'], legendAdded);
+        if (s.start_oil_time) {
+            addBar(data, label, '修补', s.start_repair_time, s.start_oil_time, colors['修补'], legendAdded);
+            const durations = s.durations || {};
+            const oilHours = durations['上油'] || 0;
+            let oilEnd;
+            if (oilHours > 0) {
+                oilEnd = new Date(new Date(s.start_oil_time).getTime() + oilHours * 3600000);
+            } else {
+                oilEnd = new Date(s.exit_time);
+            }
+            if (oilEnd > new Date(s.start_oil_time)) {
+                addBar(data, label, '上油', s.start_oil_time, oilEnd, colors['上油'], legendAdded);
+            }
+            if (oilEnd < new Date(s.exit_time)) {
+                addBar(data, label, '等待出坞', oilEnd, s.exit_time, colors['等待出坞'], legendAdded);
+            }
+        } else {
+            addBar(data, label, '修补', s.start_repair_time, s.exit_time, colors['修补'], legendAdded);
+        }
+    });
+    const layout = {
+        title: title,
+        barmode: 'stack',
+        height: 400,
+        xaxis: { type: 'date', title: '时间' },
+        yaxis: { title: '船只/船坞' },
+        showlegend: true,
+        legend: { orientation: 'h', y: -0.2 }
+    };
+    Plotly.newPlot(divId, data, layout, { responsive: true });
+}
+
+function addBar(data, y, name, start, end, color) {
+    const s = new Date(start), e = new Date(end);
+    if (e <= s) return;
+    data.push({
+        type: 'bar',
+        orientation: 'h',
+        name: name,
+        x: [(e - s) / 1000],
+        y: [y],
+        base: s.toISOString(),
+        marker: { color: color },
+        hovertext: `${name}<br>${formatDT(start)} - ${formatDT(end)}`,
+        hoverinfo: 'text',
+        showlegend: !data.some(d => d.name === name)
+    });
+}
+
+async function renderTideChart(scheduleData) {
+    const enter = new Date(scheduleData.enter_time);
+    const exit = new Date(scheduleData.exit_time);
+    const startDate = enter.toISOString().slice(0, 10);
+    const endDate = exit.toISOString().slice(0, 10);
+    const res = await fetch(`${TIDE_API}/by-date?start_date=${startDate}&end_date=${endDate}`);
+    const tides = await res.json();
+    const x = tides.map(t => new Date(t.tide_date + 'T' + t.tide_time));
+    const y = tides.map(t => t.water_level);
+    const req = scheduleData.required_level;
+    const trace1 = { x, y, mode: 'lines+markers', name: '潮位(m)', line: { color: '#0d6efd', width: 3 } };
+    const trace2 = {
+        x: [x[0], x[x.length - 1]], y: [req, req],
+        mode: 'lines', name: '要求水位(' + req + 'm)',
+        line: { color: '#dc3545', width: 2, dash: 'dash' }
+    };
+    const layout = {
+        title: '潮位变化曲线',
+        height: 300,
+        xaxis: { type: 'date', title: '时间' },
+        yaxis: { title: '潮位(m)' },
+        shapes: [{
+            type: 'rect',
+            x0: scheduleData.enter_time, x1: scheduleData.exit_time,
+            y0: 0, y1: 1, yref: 'paper',
+            fillcolor: 'rgba(255,193,7,0.2)', line: { width: 0 }
+        }],
+        showlegend: true, legend: { orientation: 'h', y: -0.3 }
+    };
+    Plotly.newPlot('tideChart', [trace1, trace2], layout, { responsive: true });
+}
+
+function formatDT(dt) {
+    if (!dt) return '-';
+    const d = new Date(dt);
+    const pad = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+(async function init() {
+    await loadSelects();
+    loadSchedules();
+})();
+</script>
+{% endblock %}

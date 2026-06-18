@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block title %}船只管理{% endblock %}
+{% block content %}
+<h2>船只管理</h2>
+<div class="card mb-4">
+    <div class="card-header">新增/编辑船只</div>
+    <div class="card-body">
+        <form id="shipForm" class="row g-3">
+            <input type="hidden" id="shipId">
+            <div class="col-md-3">
+                <label class="form-label">船只编号 *</label>
+                <input type="text" class="form-control" id="shipCode" required>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">船只名称 *</label>
+                <input type="text" class="form-control" id="shipName" required>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">吃水深度(米) *</label>
+                <input type="number" step="0.01" min="0.01" class="form-control" id="shipDraft" required>
+            </div>
+            <div class="col-md-2 d-flex align-items-end">
+                <button type="submit" class="btn btn-primary me-2" id="submitBtn">添加</button>
+                <button type="button" class="btn btn-secondary" id="resetBtn">重置</button>
+            </div>
+        </form>
+        <div id="formError" class="form-error mt-2"></div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">船只列表</div>
+    <div class="card-body">
+        <table class="table table-striped">
+            <thead>
+                <tr>
+                    <th>编号</th><th>名称</th><th>吃水深度(米)</th><th>操作</th>
+                </tr>
+            </thead>
+            <tbody id="shipTableBody"></tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+{% block extra_js %}
+<script>
+const API_URL = '/api/ships';
+
+async function loadShips() {
+    const res = await fetch(API_URL);
+    const ships = await res.json();
+    const tbody = document.getElementById('shipTableBody');
+    tbody.innerHTML = ships.map(s => `
+        <tr>
+            <td>${s.code}</td><td>${s.name}</td><td>${s.draft}</td>
+            <td>
+                <button class="btn btn-sm btn-outline-primary" onclick='editShip(${JSON.stringify(s)})'>编辑</button>
+                <button class="btn btn-sm btn-outline-danger" onclick="deleteShip(${s.id})">删除</button>
+            </td>
+        </tr>
+    `).join('');
+}
+
+function resetForm() {
+    document.getElementById('shipForm').reset();
+    document.getElementById('shipId').value = '';
+    document.getElementById('submitBtn').textContent = '添加';
+    document.getElementById('formError').textContent = '';
+}
+
+function editShip(ship) {
+    document.getElementById('shipId').value = ship.id;
+    document.getElementById('shipCode').value = ship.code;
+    document.getElementById('shipName').value = ship.name;
+    document.getElementById('shipDraft').value = ship.draft;
+    document.getElementById('submitBtn').textContent = '保存';
+    document.getElementById('formError').textContent = '';
+}
+
+async function deleteShip(id) {
+    if (!confirm('确定删除此船只？相关修船任务和排程将一并删除。')) return;
+    await fetch(`${API_URL}/${id}`, { method: 'DELETE' });
+    loadShips();
+}
+
+document.getElementById('shipForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const id = document.getElementById('shipId').value;
+    const data = {
+        code: document.getElementById('shipCode').value.trim(),
+        name: document.getElementById('shipName').value.trim(),
+        draft: parseFloat(document.getElementById('shipDraft').value)
+    };
+    if (!data.code || !data.name || !(data.draft > 0)) {
+        document.getElementById('formError').textContent = '请正确填写所有必填项（吃水深度必须大于0）';
+        return;
+    }
+    const url = id ? `${API_URL}/${id}` : API_URL;
+    const method = id ? 'PUT' : 'POST';
+    const res = await fetch(url, {
+        method, headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+    });
+    if (res.ok) {
+        resetForm();
+        loadShips();
+    } else {
+        const err = await res.json();
+        document.getElementById('formError').textContent = err.detail || '操作失败';
+    }
+});
+
+document.getElementById('resetBtn').addEventListener('click', resetForm);
+loadShips();
+</script>
+{% endblock %}

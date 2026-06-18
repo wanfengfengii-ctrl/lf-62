@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+{% block title %}潮汐时间表{% endblock %}
+{% block content %}
+<h2>潮汐时间表</h2>
+<div class="alert alert-info">
+    <strong>说明：</strong>每天至少录入2条潮位数据（高潮和低潮）。修改潮汐表后，所有排程将标记为草稿需重新生成。
+</div>
+
+<div class="card mb-4">
+    <div class="card-header">新增潮位记录</div>
+    <div class="card-body">
+        <form id="tideForm" class="row g-3">
+            <div class="col-md-3">
+                <label class="form-label">日期 *</label>
+                <input type="date" class="form-control" id="tideDate" required>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">时间(HH:MM) *</label>
+                <input type="time" class="form-control" id="tideTime" required>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">潮位(米) *</label>
+                <input type="number" step="0.01" min="0.01" class="form-control" id="tideLevel" required>
+            </div>
+            <div class="col-md-3 d-flex align-items-end">
+                <button type="submit" class="btn btn-primary me-2">添加</button>
+                <button type="button" class="btn btn-secondary" id="resetBtn">重置</button>
+            </div>
+        </form>
+        <div id="formError" class="form-error mt-2"></div>
+    </div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-header">快速批量录入示例数据</div>
+    <div class="card-body">
+        <button class="btn btn-outline-primary" onclick="loadSampleData()">加载7天示例潮汐数据</button>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <span>潮位记录列表</span>
+        <div>
+            <input type="date" id="filterStart" class="form-control form-control-sm d-inline" style="width:150px;">
+            <span class="mx-2">至</span>
+            <input type="date" id="filterEnd" class="form-control form-control-sm d-inline" style="width:150px;">
+            <button class="btn btn-sm btn-outline-secondary ms-2" onclick="loadTides()">筛选</button>
+        </div>
+    </div>
+    <div class="card-body">
+        <table class="table table-striped">
+            <thead>
+                <tr>
+                    <th>日期</th><th>时间</th><th>潮位(米)</th><th>操作</th>
+                </tr>
+            </thead>
+            <tbody id="tideTableBody"></tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+{% block extra_js %}
+<script>
+const API_URL = '/api/tides';
+
+async function loadTides() {
+    const start = document.getElementById('filterStart').value;
+    const end = document.getElementById('filterEnd').value;
+    let url = API_URL;
+    if (start && end) url = `${API_URL}/by-date?start_date=${start}&end_date=${end}`;
+    const res = await fetch(url);
+    const tides = await res.json();
+    const tbody = document.getElementById('tideTableBody');
+    tbody.innerHTML = tides.map(t => `
+        <tr>
+            <td>${t.tide_date}</td><td>${t.tide_time}</td><td>${t.water_level}</td>
+            <td>
+                <button class="btn btn-sm btn-outline-danger" onclick="deleteTide(${t.id})">删除</button>
+            </td>
+        </tr>
+    `).join('') || '<tr><td colspan="4" class="text-center text-muted">暂无数据</td></tr>';
+}
+
+async function deleteTide(id) {
+    if (!confirm('确定删除此潮位记录？这将使所有排程失效。')) return;
+    await fetch(`${API_URL}/${id}`, { method: 'DELETE' });
+    loadTides();
+}
+
+document.getElementById('tideForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const dateVal = document.getElementById('tideDate').value;
+    const timeVal = document.getElementById('tideTime').value;
+    const levelVal = parseFloat(document.getElementById('tideLevel').value);
+    if (!dateVal || !timeVal || !(levelVal > 0)) {
+        document.getElementById('formError').textContent = '请正确填写所有字段（潮位必须大于0）';
+        return;
+    }
+    const res = await fetch(API_URL, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tide_date: dateVal, tide_time: timeVal, water_level: levelVal })
+    });
+    if (res.ok) {
+        document.getElementById('tideForm').reset();
+        document.getElementById('formError').textContent = '';
+        loadTides();
+    } else {
+        const err = await res.json();
+        document.getElementById('formError').textContent = err.detail || '操作失败';
+    }
+});
+
+document.getElementById('resetBtn').addEventListener('click', () => {
+    document.getElementById('tideForm').reset();
+    document.getElementById('formError').textContent = '';
+});
+
+async function loadSampleData() {
+    const today = new Date();
+    const samples = [];
+    for (let i = 0; i < 7; i++) {
+        const d = new Date(today);
+        d.setDate(d.getDate() + i);
+        const dateStr = d.toISOString().slice(0, 10);
+        const base = 2.0 + Math.sin(i) * 0.5;
+        samples.push({ tide_date: dateStr, tide_time: '02:30', water_level: +(base + 1.2).toFixed(2) });
+        samples.push({ tide_date: dateStr, tide_time: '08:45', water_level: +(base - 0.8).toFixed(2) });
+        samples.push({ tide_date: dateStr, tide_time: '14:50', water_level: +(base + 1.0).toFixed(2) });
+        samples.push({ tide_date: dateStr, tide_time: '21:10', water_level: +(base - 0.6).toFixed(2) });
+    }
+    const res = await fetch(`${API_URL}/batch`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(samples)
+    });
+    if (res.ok) {
+        alert('已加载7天示例潮汐数据');
+        loadTides();
+    } else {
+        const err = await res.json();
+        alert('加载失败：' + (err.detail || ''));
+    }
+}
+
+const today = new Date();
+document.getElementById('tideDate').value = today.toISOString().slice(0, 10);
+loadTides();
+</script>
+{% endblock %}

@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+{% block title %}修船任务管理{% endblock %}
+{% block content %}
+<h2>修船任务管理</h2>
+<div class="alert alert-info">
+    <strong>说明：</strong>为每艘船配置排水、修补、上油三道工序的时长（小时）。每艘船每道工序只能配置一条。工序时长必须大于0。
+</div>
+
+<div class="card mb-4">
+    <div class="card-header">新增/编辑修船任务</div>
+    <div class="card-body">
+        <form id="taskForm" class="row g-3">
+            <input type="hidden" id="taskId">
+            <div class="col-md-3">
+                <label class="form-label">选择船只 *</label>
+                <select class="form-select" id="taskShip" required>
+                    <option value="">请选择...</option>
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">工序类型 *</label>
+                <select class="form-select" id="taskType" required>
+                    <option value="">请选择...</option>
+                    <option value="排水">排水</option>
+                    <option value="修补">修补</option>
+                    <option value="上油">上油</option>
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">工序时长(小时) *</label>
+                <input type="number" step="0.1" min="0.1" class="form-control" id="taskDuration" required>
+            </div>
+            <div class="col-md-3 d-flex align-items-end">
+                <button type="submit" class="btn btn-primary me-2" id="submitBtn">添加</button>
+                <button type="button" class="btn btn-secondary" id="resetBtn">重置</button>
+            </div>
+        </form>
+        <div id="formError" class="form-error mt-2"></div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">修船任务列表</div>
+    <div class="card-body">
+        <table class="table table-striped">
+            <thead>
+                <tr>
+                    <th>船只编号</th><th>船只名称</th><th>工序类型</th><th>时长(小时)</th><th>操作</th>
+                </tr>
+            </thead>
+            <tbody id="taskTableBody"></tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+{% block extra_js %}
+<script>
+const TASK_API = '/api/tasks';
+const SHIP_API = '/api/ships';
+let shipMap = {};
+
+async function loadShips() {
+    const res = await fetch(SHIP_API);
+    const ships = await res.json();
+    shipMap = {};
+    const select = document.getElementById('taskShip');
+    select.innerHTML = '<option value="">请选择...</option>';
+    ships.forEach(s => {
+        shipMap[s.id] = s;
+        select.innerHTML += `<option value="${s.id}">${s.code} - ${s.name}</option>`;
+    });
+}
+
+async function loadTasks() {
+    const res = await fetch(TASK_API);
+    const tasks = await res.json();
+    const tbody = document.getElementById('taskTableBody');
+    tbody.innerHTML = tasks.map(t => {
+        const ship = shipMap[t.ship_id] || { code: '?', name: '?' };
+        return `
+        <tr>
+            <td>${ship.code}</td><td>${ship.name}</td><td>${t.process_type}</td><td>${t.duration_hours}</td>
+            <td>
+                <button class="btn btn-sm btn-outline-danger" onclick="deleteTask(${t.id})">删除</button>
+            </td>
+        </tr>`;
+    }).join('') || '<tr><td colspan="5" class="text-center text-muted">暂无数据</td></tr>';
+}
+
+function resetForm() {
+    document.getElementById('taskForm').reset();
+    document.getElementById('taskId').value = '';
+    document.getElementById('submitBtn').textContent = '添加';
+    document.getElementById('formError').textContent = '';
+}
+
+async function deleteTask(id) {
+    if (!confirm('确定删除此任务？相关排程将标记为草稿。')) return;
+    await fetch(`${TASK_API}/${id}`, { method: 'DELETE' });
+    loadTasks();
+}
+
+document.getElementById('taskForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const ship_id = parseInt(document.getElementById('taskShip').value);
+    const process_type = document.getElementById('taskType').value;
+    const duration_hours = parseFloat(document.getElementById('taskDuration').value);
+
+    if (!ship_id || !process_type || !(duration_hours > 0)) {
+        document.getElementById('formError').textContent = '请正确填写所有字段（时长必须大于0）';
+        return;
+    }
+
+    const res = await fetch(TASK_API, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ship_id, process_type, duration_hours })
+    });
+    if (res.ok) {
+        resetForm();
+        loadTasks();
+    } else {
+        const err = await res.json();
+        document.getElementById('formError').textContent = err.detail || '操作失败';
+    }
+});
+
+document.getElementById('resetBtn').addEventListener('click', resetForm);
+
+(async function init() {
+    await loadShips();
+    loadTasks();
+})();
+</script>
+{% endblock %}

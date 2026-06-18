@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}首页 - 潮汐船坞修船排程系统{% endblock %}
+{% block content %}
+<div class="jumbotron">
+    <h1 class="display-4">潮汐船坞修船排程系统</h1>
+    <p class="lead">根据潮位窗口安排木船进坞、排水、修补、上油和出坞</p>
+    <hr class="my-4">
+    <div class="row">
+        <div class="col-md-3 mb-3">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">船只管理</h5>
+                    <p class="card-text">维护船只编号、名称和吃水深度</p>
+                    <a href="/ships" class="btn btn-primary">进入</a>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3 mb-3">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">船坞管理</h5>
+                    <p class="card-text">维护船坞编号、名称和最低水位要求</p>
+                    <a href="/docks" class="btn btn-primary">进入</a>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3 mb-3">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">潮汐时间表</h5>
+                    <p class="card-text">录入每日潮位变化数据</p>
+                    <a href="/tides" class="btn btn-primary">进入</a>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3 mb-3">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">修船任务</h5>
+                    <p class="card-text">配置各船只的排水、修补、上油工序时长</p>
+                    <a href="/tasks" class="btn btn-primary">进入</a>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="row mt-3">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">修船排程甘特图</h5>
+                    <p class="card-text">根据船只吃水深度、船坞水位要求、工序时长和每日潮位变化自动生成排程</p>
+                    <a href="/schedules" class="btn btn-success btn-lg">生成排程 →</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
