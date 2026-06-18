@@ -48,7 +48,7 @@ def create_tide(tide_in: TideIn, db: Session = Depends(get_db)):
     db.add(tide)
     db.commit()
     db.refresh(tide)
-    _invalidate_all_schedules(db)
+    _invalidate_affected_schedules(db, [tide_in.tide_date])
     return tide
 
 
@@ -58,11 +58,13 @@ def update_tide(tide_id: int, tide_in: TideIn, db: Session = Depends(get_db)):
     if not tide:
         raise HTTPException(status_code=404, detail="潮位记录不存在")
     _validate_time(tide_in.tide_time)
+    old_date = tide.tide_date
     for key, value in tide_in.dict().items():
         setattr(tide, key, value)
     db.commit()
     db.refresh(tide)
-    _invalidate_all_schedules(db)
+    affected_dates = list(set([old_date, tide_in.tide_date]))
+    _invalidate_affected_schedules(db, affected_dates)
     return tide
 
 
@@ -71,20 +73,23 @@ def delete_tide(tide_id: int, db: Session = Depends(get_db)):
     tide = db.query(models.Tide).filter(models.Tide.id == tide_id).first()
     if not tide:
         raise HTTPException(status_code=404, detail="潮位记录不存在")
+    affected_date = tide.tide_date
     db.delete(tide)
     db.commit()
-    _invalidate_all_schedules(db)
+    _invalidate_affected_schedules(db, [affected_date])
     return {"ok": True}
 
 
 @router.post("/batch")
 def create_tides_batch(tides_in: List[TideIn], db: Session = Depends(get_db)):
+    affected_dates = set()
     for t in tides_in:
         _validate_time(t.tide_time)
         tide = models.Tide(**t.dict())
         db.add(tide)
+        affected_dates.add(t.tide_date)
     db.commit()
-    _invalidate_all_schedules(db)
+    _invalidate_affected_schedules(db, list(affected_dates))
     return {"ok": True, "count": len(tides_in)}
 
 
@@ -97,6 +102,36 @@ def _validate_time(time_str: str):
         raise HTTPException(status_code=400, detail="时间格式错误，应为 HH:MM")
 
 
-def _invalidate_all_schedules(db: Session):
-    db.query(models.Schedule).update({models.Schedule.status: "draft"})
+def _invalidate_affected_schedules(db: Session, affected_dates: List[date]):
+    from app.scheduler import auto_recalculate_schedules
+    from datetime import timedelta
+
+    affected_ship_ids = set()
+    all_draft = db.query(models.Schedule).filter(models.Schedule.status == "draft").all()
+    all_conflict = db.query(models.Schedule).filter(models.Schedule.status == "conflict").all()
+
+    for s in list(all_draft) + list(all_conflict):
+        enter_d = s.enter_time.date()
+        exit_d = s.exit_time.date()
+        for ad in affected_dates:
+            if enter_d - timedelta(days=2) <= ad <= exit_d + timedelta(days=3):
+                affected_ship_ids.add(s.ship_id)
+                break
+
+    confirmed = db.query(models.Schedule).filter(models.Schedule.status == "confirmed").all()
+    for s in confirmed:
+        enter_d = s.enter_time.date()
+        exit_d = s.exit_time.date()
+        for ad in affected_dates:
+            if enter_d - timedelta(days=2) <= ad <= exit_d + timedelta(days=3):
+                s.status = "draft"
+                affected_ship_ids.add(s.ship_id)
+                break
     db.commit()
+
+    if affected_ship_ids:
+        auto_recalculate_schedules(
+            db,
+            target_ship_ids=list(affected_ship_ids),
+            trigger_source=f"tide_data_change:{','.join(d.isoformat() for d in affected_dates)}"
+        )

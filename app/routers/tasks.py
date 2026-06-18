@@ -107,7 +107,9 @@ def delete_task(task_id: int, db: Session = Depends(get_db)):
 
 
 def _invalidate_ship_schedules(db: Session, ship_id: int):
-    db.query(models.Schedule).filter(models.Schedule.ship_id == ship_id).update(
-        {models.Schedule.status: "draft"}
+    from app.scheduler import auto_recalculate_schedules
+    auto_recalculate_schedules(
+        db,
+        target_ship_ids=[ship_id],
+        trigger_source=f"task_config_change:ship_{ship_id}"
     )
-    db.commit()

@@ -73,7 +73,9 @@ def delete_dock(dock_id: int, db: Session = Depends(get_db)):
 
 
 def _invalidate_dock_schedules(db: Session, dock_id: int):
-    db.query(models.Schedule).filter(models.Schedule.dock_id == dock_id).update(
-        {models.Schedule.status: "draft"}
+    from app.scheduler import auto_recalculate_schedules
+    auto_recalculate_schedules(
+        db,
+        target_dock_ids=[dock_id],
+        trigger_source=f"dock_config_change:dock_{dock_id}"
     )
-    db.commit()

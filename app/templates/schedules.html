@@ -1,23 +1,36 @@
 {% extends "base.html" %}
 {% block title %}修船排程甘特图{% endblock %}
+{% block extra_css %}
+<style>
+.gantt-container { position: relative; }
+.legend-item { display: inline-flex; align-items: center; margin-right: 14px; font-size: 0.85em; }
+.legend-color { width: 14px; height: 14px; border-radius: 3px; margin-right: 4px; display: inline-block; }
+.unscheduled-card { border-left: 4px solid #dc3545; }
+.status-draft { opacity: 0.75; }
+.status-confirmed { opacity: 1; }
+.status-conflict { opacity: 0.55; }
+.gantt-detail-modal .modal-lg { max-width: 800px; }
+.bar-clickable { cursor: pointer; transition: opacity 0.2s; }
+.bar-clickable:hover { opacity: 0.8 !important; }
+.dock-group-header { background: #f8f9fa; font-weight: bold; padding: 4px 8px; border-radius: 4px; }
+</style>
+{% endblock %}
 {% block content %}
 <h2>修船排程甘特图</h2>
 
 <div class="card mb-4">
-    <div class="card-header">生成新排程</div>
+    <div class="card-header">批量生成排程</div>
     <div class="card-body">
-        <form id="scheduleForm" class="row g-3">
-            <div class="col-md-3">
-                <label class="form-label">选择船只 *</label>
-                <select class="form-select" id="shipSelect" required>
-                    <option value="">请选择...</option>
-                </select>
+        <form id="batchScheduleForm" class="row g-3">
+            <div class="col-md-4">
+                <label class="form-label">选择船只 *（按优先级排序调度）</label>
+                <select class="form-select" id="shipSelect" multiple size="5" required></select>
+                <small class="text-muted">按住 Ctrl/Cmd 多选</small>
             </div>
             <div class="col-md-3">
-                <label class="form-label">选择船坞 *</label>
-                <select class="form-select" id="dockSelect" required>
-                    <option value="">请选择...</option>
-                </select>
+                <label class="form-label">选择船坞 *（可多选）</label>
+                <select class="form-select" id="dockSelect" multiple size="5" required></select>
+                <small class="text-muted">按住 Ctrl/Cmd 多选</small>
             </div>
             <div class="col-md-2">
                 <label class="form-label">起始日期 *</label>
@@ -27,8 +40,8 @@
                 <label class="form-label">结束日期 *</label>
                 <input type="date" class="form-control" id="toDate" required>
             </div>
-            <div class="col-md-2 d-flex align-items-end">
-                <button type="button" class="btn btn-primary" onclick="previewSchedule()">预览排程</button>
+            <div class="col-md-1 d-flex align-items-end">
+                <button type="button" class="btn btn-primary w-100" onclick="batchPreviewSchedule()">预览</button>
             </div>
         </form>
         <div id="previewError" class="form-error mt-2"></div>
@@ -37,31 +50,114 @@
 
 <div id="previewSection" class="card mb-4" style="display:none;">
     <div class="card-header d-flex justify-content-between align-items-center">
-        <span>排程预览</span>
-        <button type="button" class="btn btn-success btn-sm" onclick="saveSchedule()">确认并保存为正式排程</button>
+        <span>批量排程预览</span>
+        <div>
+            <button type="button" class="btn btn-success btn-sm me-2" onclick="batchSaveSchedule()">保存为草稿排程</button>
+        </div>
     </div>
     <div class="card-body">
-        <div id="previewInfo" class="mb-3"></div>
-        <div id="ganttChart" style="width:100%;height:400px;"></div>
-        <div id="tideChart" style="width:100%;height:300px;" class="mt-4"></div>
+        <div id="previewSummary" class="mb-3"></div>
+        <div id="unassignedList" class="mb-3" style="display:none;"></div>
+        <div id="previewGantt" class="gantt-container" style="width:100%;height:500px;"></div>
     </div>
 </div>
 
 <div class="card mb-4">
-    <div class="card-header d-flex justify-content-between align-items-center">
-        <span>已保存排程</span>
-        <button type="button" class="btn btn-outline-danger btn-sm" onclick="clearInvalid()">清除草稿排程</button>
+    <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <span>排程总览</span>
+        <div class="d-flex gap-2 flex-wrap align-items-center">
+            <select class="form-select form-select-sm" id="filterStatus" style="width:auto;" onchange="loadSchedules()">
+                <option value="">全部状态</option>
+                <option value="draft">草稿</option>
+                <option value="confirmed">已确认</option>
+                <option value="conflict">冲突</option>
+            </select>
+            <select class="form-select form-select-sm" id="filterDock" style="width:auto;" onchange="loadSchedules()">
+                <option value="">全部船坞</option>
+            </select>
+            <select class="form-select form-select-sm" id="filterShip" style="width:auto;" onchange="loadSchedules()">
+                <option value="">全部船只</option>
+            </select>
+            <input type="date" class="form-control form-control-sm" id="filterFromDate" style="width:auto;" onchange="loadSchedules()" placeholder="起始">
+            <input type="date" class="form-control form-control-sm" id="filterToDate" style="width:auto;" onchange="loadSchedules()" placeholder="截止">
+            <button type="button" class="btn btn-outline-primary btn-sm" onclick="exportCSV()">导出 CSV</button>
+            <button type="button" class="btn btn-outline-success btn-sm" onclick="confirmDrafts()">确认草稿</button>
+            <button type="button" class="btn btn-outline-info btn-sm" onclick="recalculateSchedules()">重新计算</button>
+            <button type="button" class="btn btn-outline-danger btn-sm" onclick="clearInvalid()">清除草稿/冲突</button>
+        </div>
     </div>
     <div class="card-body">
-        <div id="savedGantt" style="width:100%;height:400px;"></div>
-        <table class="table table-sm mt-3" id="scheduleTable">
-            <thead>
-                <tr>
-                    <th>船只</th><th>船坞</th><th>进坞</th><th>出坞</th><th>状态</th><th>操作</th>
-                </tr>
-            </thead>
-            <tbody></tbody>
-        </table>
+        <div id="ganttLegend" class="mb-2"></div>
+        <div id="savedGantt" class="gantt-container" style="width:100%;min-height:400px;"></div>
+
+        <ul class="nav nav-tabs mt-4" id="detailTab" role="tablist">
+            <li class="nav-item">
+                <button class="nav-link active" id="table-tab" data-bs-toggle="tab" data-bs-target="#tablePanel" type="button">排程明细</button>
+            </li>
+            <li class="nav-item">
+                <button class="nav-link" id="unscheduled-tab" data-bs-toggle="tab" data-bs-target="#unscheduledPanel" type="button">未安排船只 <span class="badge bg-danger" id="unscheduledBadge">0</span></button>
+            </li>
+            <li class="nav-item">
+                <button class="nav-link" id="conflict-tab" data-bs-toggle="tab" data-bs-target="#conflictPanel" type="button">冲突排程 <span class="badge bg-warning text-dark" id="conflictBadge">0</span></button>
+            </li>
+        </ul>
+        <div class="tab-content">
+            <div class="tab-pane fade show active" id="tablePanel">
+                <table class="table table-sm mt-3" id="scheduleTable">
+                    <thead>
+                        <tr>
+                            <th>船只</th><th>优先级</th><th>船坞</th><th>要求水位</th>
+                            <th>进坞</th><th>排水</th><th>修补</th><th>上油</th><th>出坞</th>
+                            <th>状态</th><th>冲突原因</th><th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <div class="tab-pane fade" id="unscheduledPanel">
+                <div id="unscheduledShipsList" class="mt-3"></div>
+            </div>
+            <div class="tab-pane fade" id="conflictPanel">
+                <table class="table table-sm mt-3" id="conflictTable">
+                    <thead>
+                        <tr><th>船只</th><th>优先级</th><th>冲突原因</th><th>操作</th></tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade gantt-detail-modal" id="scheduleDetailModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="detailModalTitle">排程详情</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="detailModalBody"></div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+                <button type="button" class="btn btn-danger" id="detailDeleteBtn">删除此排程</button>
+                <button type="button" class="btn btn-success" id="detailConfirmBtn" style="display:none;">确认此排程</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="algorithmInfoModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">排程算法信息</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="algorithmInfoBody"></div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+            </div>
+        </div>
     </div>
 </div>
 {% endblock %}
@@ -73,8 +169,25 @@ const SHIP_API = '/api/ships';
 const DOCK_API = '/api/docks';
 const TIDE_API = '/api/tides';
 
-let currentPreview = null;
+let currentBatchPreview = null;
+let currentSchedulesData = [];
 let shipMap = {}, dockMap = {};
+let currentViewingScheduleId = null;
+let algorithmInfo = null;
+
+const PROCESS_COLORS = {
+    '进坞': '#0d6efd',
+    '排水': '#6f42c1',
+    '修补': '#fd7e14',
+    '上油': '#198754',
+    '等待出坞': '#adb5bd'
+};
+
+const STATUS_STYLES = {
+    'confirmed': { label: '已确认', badge: 'bg-success', opacity: 1.0, dash: '' },
+    'draft': { label: '草稿', badge: 'bg-warning text-dark', opacity: 0.7, dash: 'dot' },
+    'conflict': { label: '冲突', badge: 'bg-danger', opacity: 0.5, dash: 'dash' }
+};
 
 async function loadSelects() {
     const [ships, docks] = await Promise.all([
@@ -83,72 +196,151 @@ async function loadSelects() {
     ]);
     const shipSel = document.getElementById('shipSelect');
     const dockSel = document.getElementById('dockSelect');
-    shipSel.innerHTML = '<option value="">请选择...</option>';
-    dockSel.innerHTML = '<option value="">请选择...</option>';
-    ships.forEach(s => { shipMap[s.id] = s; shipSel.innerHTML += `<option value="${s.id}">${s.code} - ${s.name} (吃水${s.draft}m)</option>`; });
-    docks.forEach(d => { dockMap[d.id] = d; dockSel.innerHTML += `<option value="${d.id}">${d.code} - ${d.name} (最低${d.min_water_level}m)</option>`; });
+    const filterDock = document.getElementById('filterDock');
+    const filterShip = document.getElementById('filterShip');
+
+    shipSel.innerHTML = '';
+    docks.forEach(d => { dockMap[d.id] = d; });
+    ships.sort((a, b) => b.priority - a.priority).forEach(s => {
+        shipMap[s.id] = s;
+        shipSel.innerHTML += `<option value="${s.id}">${s.code} - ${s.name} (吃水${s.draft}m, 优先级${s.priority})</option>`;
+    });
+
+    dockSel.innerHTML = '';
+    docks.forEach(d => {
+        dockSel.innerHTML += `<option value="${d.id}">${d.code} - ${d.name} (最低${d.min_water_level}m)</option>`;
+    });
+
+    filterDock.innerHTML = '<option value="">全部船坞</option>';
+    docks.forEach(d => {
+        filterDock.innerHTML += `<option value="${d.id}">${d.code} - ${d.name}</option>`;
+    });
+
+    filterShip.innerHTML = '<option value="">全部船只</option>';
+    ships.sort((a, b) => a.code.localeCompare(b.code)).forEach(s => {
+        filterShip.innerHTML += `<option value="${s.id}">${s.code} - ${s.name}</option>`;
+    });
+
     const today = new Date();
     const nextWeek = new Date(today); nextWeek.setDate(nextWeek.getDate() + 7);
     document.getElementById('fromDate').value = today.toISOString().slice(0, 10);
     document.getElementById('toDate').value = nextWeek.toISOString().slice(0, 10);
+
+    renderLegend();
 }
 
-async function previewSchedule() {
+function renderLegend() {
+    const legend = document.getElementById('ganttLegend');
+    let html = '';
+    for (const [name, color] of Object.entries(PROCESS_COLORS)) {
+        html += `<span class="legend-item"><span class="legend-color" style="background:${color}"></span>${name}</span>`;
+    }
+    html += `<span class="legend-item"><span class="legend-color" style="background:#198754;opacity:0.7;border:1px dashed #666"></span>草稿(虚线)</span>`;
+    html += `<span class="legend-item"><span class="legend-color" style="background:#dc3545;opacity:0.5;border:2px dashed #dc3545"></span>冲突</span>`;
+    legend.innerHTML = html;
+}
+
+function getSelectedValues(selectEl) {
+    return Array.from(selectEl.selectedOptions).map(o => parseInt(o.value));
+}
+
+async function batchPreviewSchedule() {
     document.getElementById('previewError').textContent = '';
-    const ship_id = parseInt(document.getElementById('shipSelect').value);
-    const dock_id = parseInt(document.getElementById('dockSelect').value);
+    const ship_ids = getSelectedValues(document.getElementById('shipSelect'));
+    const dock_ids = getSelectedValues(document.getElementById('dockSelect'));
     const from_date = document.getElementById('fromDate').value;
     const to_date = document.getElementById('toDate').value;
-    if (!ship_id || !dock_id || !from_date || !to_date) {
-        document.getElementById('previewError').textContent = '请完整填写所有字段';
+
+    if (!ship_ids.length) {
+        document.getElementById('previewError').textContent = '请选择至少一艘船只';
         return;
     }
-    const res = await fetch(`${SCHEDULE_API}/preview`, {
+    if (!dock_ids.length) {
+        document.getElementById('previewError').textContent = '请选择至少一个船坞';
+        return;
+    }
+    if (!from_date || !to_date) {
+        document.getElementById('previewError').textContent = '请选择日期范围';
+        return;
+    }
+
+    const res = await fetch(`${SCHEDULE_API}/batch-preview`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ship_id, dock_id, from_date, to_date })
+        body: JSON.stringify({ ship_ids, dock_ids, from_date, to_date })
     });
     if (!res.ok) {
         const err = await res.json();
-        document.getElementById('previewError').textContent = err.detail || '排程生成失败';
+        document.getElementById('previewError').textContent = err.detail || '批量排程生成失败';
         return;
     }
-    currentPreview = await res.json();
-    renderPreview(currentPreview);
-    renderTideChart(currentPreview);
+    currentBatchPreview = await res.json();
+    renderBatchPreview(currentBatchPreview);
 }
 
-function renderPreview(data) {
+function renderBatchPreview(data) {
     document.getElementById('previewSection').style.display = 'block';
-    const ship = shipMap[data.ship_id];
-    const dock = dockMap[data.dock_id];
-    document.getElementById('previewInfo').innerHTML = `
+    algorithmInfo = data.algorithm_info;
+
+    const scheduled = data.scheduled || [];
+    const unassigned = data.unassigned || [];
+    const dockStats = data.dock_statistics || {};
+
+    let dockStatsHtml = '';
+    if (Object.keys(dockStats).length > 0) {
+        dockStatsHtml = '<div class="mt-2"><small class="text-muted">船坞负载：';
+        for (const [dockId, stats] of Object.entries(dockStats)) {
+            const dockCode = stats.dock_code || dockId;
+            dockStatsHtml += ` <span class="badge bg-info me-1">${dockCode}: ${stats.scheduled}艘 / ${stats.total_hours.toFixed(1)}h</span>`;
+        }
+        dockStatsHtml += '</small></div>';
+    }
+
+    let summaryHtml = `
         <div class="row">
-            <div class="col-md-6">
-                <strong>船只：</strong>${data.ship_code} - ${data.ship_name}（吃水深度 ${ship ? ship.draft : '?'}m）<br>
-                <strong>船坞：</strong>${data.dock_code} - ${data.dock_name}（最低水位 ${dock ? dock.min_water_level : '?'}m）<br>
-                <strong>要求水位：</strong>${data.required_level}m
-            </div>
-            <div class="col-md-6">
-                <strong>进坞时间：</strong>${formatDT(data.enter_time)}<br>
-                <strong>排水：</strong>${formatDT(data.start_drain_time)} (${data.durations['排水']}h)<br>
-                <strong>修补：</strong>${formatDT(data.start_repair_time)} (${data.durations['修补']}h)<br>
-                ${data.start_oil_time ? `<strong>上油：</strong>${formatDT(data.start_oil_time)} (${data.durations['上油']}h)<br>` : ''}
-                <strong>出坞时间：</strong>${formatDT(data.exit_time)}
+            <div class="col-md-3"><span class="badge bg-primary fs-6">总船只: ${data.total_ships}</span></div>
+            <div class="col-md-3"><span class="badge bg-success fs-6">已安排: ${data.scheduled_count}</span></div>
+            <div class="col-md-3"><span class="badge bg-danger fs-6">未安排: ${data.unassigned_count}</span></div>
+            <div class="col-md-3">
+                <button type="button" class="btn btn-sm btn-outline-info" onclick="showAlgorithmInfo()">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="mb-1"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+                    算法详情
+                </button>
             </div>
         </div>
+        ${dockStatsHtml}
     `;
-    renderGantt([data], 'ganttChart', '排程预览 - ' + data.ship_code);
+    document.getElementById('previewSummary').innerHTML = summaryHtml;
+
+    if (unassigned.length > 0) {
+        document.getElementById('unassignedList').style.display = 'block';
+        document.getElementById('unassignedList').innerHTML = `
+            <div class="alert alert-warning">
+                <strong>未安排船只：</strong>
+                <ul class="mb-0 mt-1">
+                    ${unassigned.map(u => `<li><strong>${u.ship_code} - ${u.ship_name}</strong>：${u.reason}</li>`).join('')}
+                </ul>
+            </div>
+        `;
+    } else {
+        document.getElementById('unassignedList').style.display = 'none';
+    }
+
+    renderSwimLaneGantt(scheduled, [], 'previewGantt', '批量排程预览');
 }
 
-async function saveSchedule() {
-    if (!currentPreview) return;
-    if (!confirm('确认保存此排程？同船只的旧排程将被替换。')) return;
-    const res = await fetch(SCHEDULE_API, {
+async function batchSaveSchedule() {
+    if (!currentBatchPreview || !currentBatchPreview.scheduled) return;
+    if (!confirm(`确认保存 ${currentBatchPreview.scheduled.length} 个排程为草稿？`)) return;
+
+    const res = await fetch(`${SCHEDULE_API}/batch-save`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(currentPreview)
+        body: JSON.stringify({ schedules: currentBatchPreview.scheduled })
     });
     if (res.ok) {
-        alert('保存成功！');
+        const result = await res.json();
+        alert(`保存成功！已保存 ${result.saved} 个排程。` + (result.errors.length ? `失败 ${result.errors.length} 个。` : ''));
+        currentBatchPreview = null;
+        document.getElementById('previewSection').style.display = 'none';
         loadSchedules();
     } else {
         const err = await res.json();
@@ -156,21 +348,318 @@ async function saveSchedule() {
     }
 }
 
-async function loadSchedules() {
-    const res = await fetch(SCHEDULE_API);
-    const schedules = await res.json();
-    renderGantt(schedules, 'savedGantt', '已保存排程总览');
+async function confirmDrafts() {
+    if (!confirm('确认将所有草稿排程确认为正式排程？系统会自动校验潮位和冲突。')) return;
+    const res = await fetch(`${SCHEDULE_API}/confirm-drafts`, { method: 'POST' });
+    if (res.ok) {
+        const result = await res.json();
+        alert(`确认完成：${result.confirmed} 个确认为正式排程，${result.conflicts} 个存在冲突。`);
+        loadSchedules();
+    } else {
+        alert('操作失败');
+    }
+}
+
+async function recalculateSchedules() {
+    if (!confirm('确认重新计算所有草稿排程？')) return;
+    const res = await fetch(`${SCHEDULE_API}/recalculate`, { method: 'POST' });
+    if (res.ok) {
+        const result = await res.json();
+        alert(`重新计算完成：${result.recalculated} 个成功，${result.failed} 个失败。`);
+        loadSchedules();
+    } else {
+        alert('重新计算失败');
+    }
+}
+
+async function exportCSV() {
+    const status = document.getElementById('filterStatus').value;
+    const dock_id = document.getElementById('filterDock').value || '';
+    const ship_id = document.getElementById('filterShip').value || '';
+    const from_date = document.getElementById('filterFromDate').value || '';
+    const to_date = document.getElementById('filterToDate').value || '';
+
+    const includeDetails = confirm('是否导出详细版CSV？\n\n- 详细版：包含吃水、水位、各工序时长等完整信息\n- 精简版：仅包含核心排程信息');
+
+    let url = `${SCHEDULE_API}/csv?`;
+    if (status) url += `status=${status}&`;
+    if (dock_id) url += `dock_id=${dock_id}&`;
+    if (ship_id) url += `ship_id=${ship_id}&`;
+    if (from_date) url += `from_date=${from_date}&`;
+    if (to_date) url += `to_date=${to_date}&`;
+    url += `include_details=${includeDetails}`;
+
+    window.open(url, '_blank');
+}
+
+function renderSwimLaneGantt(schedules, conflictSchedules, divId, title) {
+    if (!schedules.length && (!conflictSchedules || !conflictSchedules.length)) {
+        Plotly.newPlot(divId, [], { title: title + '（暂无数据）' });
+        return;
+    }
+
+    const dockGroups = {};
+    schedules.forEach(s => {
+        const dockLabel = s.dock_code ? `${s.dock_code} - ${s.dock_name}` : '未分配';
+        if (!dockGroups[dockLabel]) dockGroups[dockLabel] = [];
+        dockGroups[dockLabel].push(s);
+    });
+
+    const data = [];
+    const yLabels = [];
+    const yPositions = [];
+    let yPos = 0;
+    const dayShapes = [];
+
+    const allDates = new Set();
+    schedules.forEach(s => {
+        allDates.add(s.enter_time.slice(0, 10));
+        allDates.add(s.exit_time.slice(0, 10));
+    });
+    if (conflictSchedules) {
+        conflictSchedules.forEach(s => {
+            if (s.conflict_reason) allDates.add(new Date().toISOString().slice(0, 10));
+        });
+    }
+
+    const sortedDockLabels = Object.keys(dockGroups).sort();
+    const dockSeparators = [];
+
+    sortedDockLabels.forEach((dockLabel, dockIdx) => {
+        const dockSchedules = dockGroups[dockLabel].sort(
+            (a, b) => new Date(a.enter_time) - new Date(b.enter_time)
+        );
+
+        dockSeparators.push(-0.5 + yPos);
+
+        dockSchedules.forEach((s, shipIdx) => {
+            const label = `${s.ship_code} ${s.ship_name}`;
+            yLabels.push(label);
+            yPositions.push(yPos);
+
+            const style = STATUS_STYLES[s.status] || STATUS_STYLES['draft'];
+            const opacity = style.opacity;
+            const lineDash = style.dash;
+
+            addGanttBar(data, label, '进坞', s.enter_time, s.start_drain_time, PROCESS_COLORS['进坞'], opacity, lineDash, s.id);
+            addGanttBar(data, label, '排水', s.start_drain_time, s.start_repair_time, PROCESS_COLORS['排水'], opacity, lineDash, s.id);
+
+            if (s.start_oil_time) {
+                addGanttBar(data, label, '修补', s.start_repair_time, s.start_oil_time, PROCESS_COLORS['修补'], opacity, lineDash, s.id);
+                const durations = s.durations || {};
+                const oilHours = durations['上油'] || 0;
+                let oilEnd;
+                if (oilHours > 0) {
+                    oilEnd = new Date(new Date(s.start_oil_time).getTime() + oilHours * 3600000);
+                } else {
+                    oilEnd = new Date(s.exit_time);
+                }
+                if (oilEnd > new Date(s.start_oil_time)) {
+                    addGanttBar(data, label, '上油', s.start_oil_time, oilEnd, PROCESS_COLORS['上油'], opacity, lineDash, s.id);
+                }
+                if (oilEnd < new Date(s.exit_time)) {
+                    addGanttBar(data, label, '等待出坞', oilEnd, s.exit_time, PROCESS_COLORS['等待出坞'], opacity, lineDash, s.id);
+                }
+            } else {
+                addGanttBar(data, label, '修补', s.start_repair_time, s.exit_time, PROCESS_COLORS['修补'], opacity, lineDash, s.id);
+            }
+
+            yPos++;
+        });
+
+        yPos += 0.5;
+    });
+
+    if (conflictSchedules && conflictSchedules.length > 0) {
+        dockSeparators.push(-0.5 + yPos);
+        conflictSchedules.forEach(s => {
+            const label = `⚠ ${s.ship_code} ${s.ship_name}`;
+            yLabels.push(label);
+            yPositions.push(yPos);
+            yPos++;
+        });
+        yPos += 0.5;
+    }
+
+    const allEnters = schedules.map(s => new Date(s.enter_time));
+    const allExits = schedules.map(s => new Date(s.exit_time));
+    const minTime = allEnters.length ? new Date(Math.min(...allEnters)) : new Date();
+    const maxTime = allExits.length ? new Date(Math.max(...allExits)) : new Date();
+
+    minTime.setHours(0, 0, 0, 0);
+    maxTime.setHours(23, 59, 59, 999);
+
+    const dayStart = new Date(minTime);
+    while (dayStart <= maxTime) {
+        dayShapes.push({
+            type: 'line',
+            x0: dayStart.toISOString(),
+            x1: dayStart.toISOString(),
+            y0: -1,
+            y1: yPos + 1,
+            line: { color: '#dee2e6', width: 1, dash: 'dot' }
+        });
+        dayStart.setDate(dayStart.getDate() + 1);
+    }
+
+    const layout = {
+        title: { text: title, font: { size: 16 } },
+        barmode: 'overlay',
+        height: Math.max(400, yPos * 42 + 120),
+        margin: { l: 160, r: 30, t: 50, b: 60 },
+        xaxis: {
+            type: 'date',
+            title: '时间',
+            range: [minTime.toISOString(), maxTime.toISOString()],
+            tickformat: '%m-%d %H:%M',
+            rangeslider: { visible: true, thickness: 0.08 },
+        },
+        yaxis: {
+            title: '',
+            automargin: true,
+            tickvals: yPositions,
+            ticktext: yLabels,
+            range: [-0.5, yPos - 0.5],
+        },
+        shapes: dayShapes,
+        showlegend: true,
+        legend: { orientation: 'h', y: -0.2, x: 0.5, xanchor: 'center' },
+        hovermode: 'closest',
+    };
+
+    const plotDiv = document.getElementById(divId);
+    Plotly.newPlot(divId, data, layout, { responsive: true, scrollZoom: true });
+
+    plotDiv.on('plotly_click', function(data) {
+        if (data.points && data.points.length > 0) {
+            const point = data.points[0];
+            let scheduleId = null;
+            if (point.data && point.data.customdata) {
+                const idx = point.pointIndex;
+                scheduleId = point.data.customdata[idx];
+            }
+            if (scheduleId) {
+                showScheduleDetail(scheduleId);
+            }
+        }
+    });
+}
+
+function addGanttBar(data, yLabel, name, start, end, color, opacity, lineDash, scheduleId) {
+    const s = new Date(start), e = new Date(end);
+    if (e <= s) return;
+    const durationMs = e - s;
+    const durationHours = (durationMs / 3600000).toFixed(1);
+    const traceName = name + (opacity < 1 && opacity >= 0.5 ? '(草稿)' : opacity < 0.5 ? '(冲突)' : '');
+    const existingTrace = data.find(d => d.name === traceName && d.opacity === opacity);
+    if (existingTrace) {
+        existingTrace.x.push(durationMs / 1000);
+        existingTrace.y.push(yLabel);
+        existingTrace.base.push(s.toISOString());
+        existingTrace.hovertext.push(
+            `${name} ${durationHours}h<br>${formatDT(start)} ~ ${formatDT(end)}`
+        );
+        if (scheduleId) {
+            existingTrace.customdata = existingTrace.customdata || [];
+            existingTrace.customdata.push(scheduleId);
+        }
+    } else {
+        const lineObj = { width: lineDash ? 2 : 0 };
+        if (lineDash) { lineObj.dash = lineDash; lineObj.color = '#333'; }
+        const trace = {
+            type: 'bar',
+            orientation: 'h',
+            name: traceName,
+            x: [durationMs / 1000],
+            y: [yLabel],
+            base: [s.toISOString()],
+            marker: { color: color, opacity: opacity, line: lineObj },
+            hovertext: [`${name} ${durationHours}h<br>${formatDT(start)} ~ ${formatDT(end)}`],
+            hoverinfo: 'text',
+            showlegend: !data.some(d => d.name === traceName),
+        };
+        if (scheduleId) {
+            trace.customdata = [scheduleId];
+        }
+        data.push(trace);
+    }
+}
+
+function renderScheduleTable(schedules) {
     const tbody = document.querySelector('#scheduleTable tbody');
-    tbody.innerHTML = schedules.map(s => `
-        <tr>
-            <td>${s.ship_code} - ${s.ship_name}</td>
-            <td>${s.dock_code} - ${s.dock_name}</td>
-            <td>${formatDT(s.enter_time)}</td>
-            <td>${formatDT(s.exit_time)}</td>
-            <td>${s.status === 'confirmed' ? '<span class="badge bg-success">已确认</span>' : '<span class="badge bg-secondary">草稿</span>'}</td>
-            <td><button class="btn btn-sm btn-outline-danger" onclick="deleteSchedule(${s.id})">删除</button></td>
-        </tr>
-    `).join('') || '<tr><td colspan="6" class="text-center text-muted">暂无已保存排程</td></tr>';
+    tbody.innerHTML = schedules.filter(s => s.status !== 'conflict').map(s => {
+        const style = STATUS_STYLES[s.status] || STATUS_STYLES['draft'];
+        const statusBadge = `<span class="badge ${style.badge}">${style.label}</span>`;
+        const durations = s.durations || {};
+        const drainH = durations['排水'] ? durations['排水'] + 'h' : '-';
+        const repairH = durations['修补'] ? durations['修补'] + 'h' : '-';
+        const oilH = durations['上油'] ? durations['上油'] + 'h' : '-';
+        const reqLevel = s.required_level ? s.required_level.toFixed(2) + 'm' : '-';
+
+        return `
+            <tr class="${s.status === 'draft' ? 'table-warning' : ''}">
+                <td>${s.ship_code} - ${s.ship_name}</td>
+                <td>${s.ship_priority !== undefined ? s.ship_priority : 0}</td>
+                <td>${s.dock_code} - ${s.dock_name}</td>
+                <td>${reqLevel}</td>
+                <td>${formatDT(s.enter_time)}</td>
+                <td>${formatDT(s.start_drain_time)}<br><small class="text-muted">${drainH}</small></td>
+                <td>${formatDT(s.start_repair_time)}<br><small class="text-muted">${repairH}</small></td>
+                <td>${s.start_oil_time ? formatDT(s.start_oil_time) + '<br><small class="text-muted">' + oilH + '</small>' : '-'}</td>
+                <td>${formatDT(s.exit_time)}</td>
+                <td>${statusBadge}</td>
+                <td><small>${s.conflict_reason || ''}</small></td>
+                <td><button class="btn btn-sm btn-outline-danger" onclick="deleteSchedule(${s.id})">删除</button></td>
+            </tr>
+        `;
+    }).join('') || '<tr><td colspan="12" class="text-center text-muted">暂无排程数据</td></tr>';
+}
+
+function renderConflictTable(conflictSchedules) {
+    const tbody = document.querySelector('#conflictTable tbody');
+    if (!conflictSchedules.length) {
+        tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">无冲突排程</td></tr>';
+        return;
+    }
+    tbody.innerHTML = conflictSchedules.map(s => {
+        return `
+            <tr class="table-danger">
+                <td>${s.ship_code} - ${s.ship_name}</td>
+                <td>${s.ship_priority !== undefined ? s.ship_priority : 0}</td>
+                <td><small>${s.conflict_reason || ''}</small></td>
+                <td><button class="btn btn-sm btn-outline-danger" onclick="deleteSchedule(${s.id})">删除</button></td>
+            </tr>
+        `;
+    }).join('');
+}
+
+function renderUnscheduledShips(unscheduledShips) {
+    const container = document.getElementById('unscheduledShipsList');
+    if (!unscheduledShips.length) {
+        container.innerHTML = '<div class="text-center text-muted py-3">所有船只均已安排</div>';
+        return;
+    }
+    container.innerHTML = unscheduledShips.map(s => {
+        const hasTasks = s.has_tasks;
+        const reason = s.conflict_reason || (hasTasks ? '待排程' : '未配置修船工序');
+        const alertClass = s.conflict_reason ? 'alert-danger' : (hasTasks ? 'alert-warning' : 'alert-secondary');
+        return `
+            <div class="card mb-2 unscheduled-card">
+                <div class="card-body py-2 px-3">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <strong>${s.ship_code} - ${s.ship_name}</strong>
+                            <span class="badge bg-info ms-2">优先级 ${s.priority}</span>
+                            <span class="badge bg-secondary ms-1">吃水 ${s.draft}m</span>
+                        </div>
+                        <div>
+                            <small class="text-muted">${reason}</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
 }
 
 async function deleteSchedule(id) {
@@ -180,103 +669,9 @@ async function deleteSchedule(id) {
 }
 
 async function clearInvalid() {
-    if (!confirm('确定清除所有草稿排程？')) return;
+    if (!confirm('确定清除所有草稿和冲突排程？')) return;
     await fetch(`${SCHEDULE_API}/all/invalid`, { method: 'DELETE' });
     loadSchedules();
-}
-
-function renderGantt(schedules, divId, title) {
-    if (!schedules.length) {
-        Plotly.newPlot(divId, [], { title: title + '（暂无数据）' });
-        return;
-    }
-    const colors = { '进坞': '#0d6efd', '排水': '#6f42c1', '修补': '#fd7e14', '上油': '#198754', '等待出坞': '#adb5bd' };
-    const data = [];
-    const legendAdded = {};
-    schedules.forEach((s) => {
-        const ship = s.ship_code || (shipMap[s.ship_id] ? shipMap[s.ship_id].code : '船' + s.ship_id);
-        const label = ship + ' / ' + (s.dock_code || (dockMap[s.dock_id] ? dockMap[s.dock_id].code : '坞' + s.dock_id));
-        addBar(data, label, '进坞', s.enter_time, s.start_drain_time, colors['进坞'], legendAdded);
-        addBar(data, label, '排水', s.start_drain_time, s.start_repair_time, colors['排水'], legendAdded);
-        if (s.start_oil_time) {
-            addBar(data, label, '修补', s.start_repair_time, s.start_oil_time, colors['修补'], legendAdded);
-            const durations = s.durations || {};
-            const oilHours = durations['上油'] || 0;
-            let oilEnd;
-            if (oilHours > 0) {
-                oilEnd = new Date(new Date(s.start_oil_time).getTime() + oilHours * 3600000);
-            } else {
-                oilEnd = new Date(s.exit_time);
-            }
-            if (oilEnd > new Date(s.start_oil_time)) {
-                addBar(data, label, '上油', s.start_oil_time, oilEnd, colors['上油'], legendAdded);
-            }
-            if (oilEnd < new Date(s.exit_time)) {
-                addBar(data, label, '等待出坞', oilEnd, s.exit_time, colors['等待出坞'], legendAdded);
-            }
-        } else {
-            addBar(data, label, '修补', s.start_repair_time, s.exit_time, colors['修补'], legendAdded);
-        }
-    });
-    const layout = {
-        title: title,
-        barmode: 'stack',
-        height: 400,
-        xaxis: { type: 'date', title: '时间' },
-        yaxis: { title: '船只/船坞' },
-        showlegend: true,
-        legend: { orientation: 'h', y: -0.2 }
-    };
-    Plotly.newPlot(divId, data, layout, { responsive: true });
-}
-
-function addBar(data, y, name, start, end, color) {
-    const s = new Date(start), e = new Date(end);
-    if (e <= s) return;
-    data.push({
-        type: 'bar',
-        orientation: 'h',
-        name: name,
-        x: [(e - s) / 1000],
-        y: [y],
-        base: s.toISOString(),
-        marker: { color: color },
-        hovertext: `${name}<br>${formatDT(start)} - ${formatDT(end)}`,
-        hoverinfo: 'text',
-        showlegend: !data.some(d => d.name === name)
-    });
-}
-
-async function renderTideChart(scheduleData) {
-    const enter = new Date(scheduleData.enter_time);
-    const exit = new Date(scheduleData.exit_time);
-    const startDate = enter.toISOString().slice(0, 10);
-    const endDate = exit.toISOString().slice(0, 10);
-    const res = await fetch(`${TIDE_API}/by-date?start_date=${startDate}&end_date=${endDate}`);
-    const tides = await res.json();
-    const x = tides.map(t => new Date(t.tide_date + 'T' + t.tide_time));
-    const y = tides.map(t => t.water_level);
-    const req = scheduleData.required_level;
-    const trace1 = { x, y, mode: 'lines+markers', name: '潮位(m)', line: { color: '#0d6efd', width: 3 } };
-    const trace2 = {
-        x: [x[0], x[x.length - 1]], y: [req, req],
-        mode: 'lines', name: '要求水位(' + req + 'm)',
-        line: { color: '#dc3545', width: 2, dash: 'dash' }
-    };
-    const layout = {
-        title: '潮位变化曲线',
-        height: 300,
-        xaxis: { type: 'date', title: '时间' },
-        yaxis: { title: '潮位(m)' },
-        shapes: [{
-            type: 'rect',
-            x0: scheduleData.enter_time, x1: scheduleData.exit_time,
-            y0: 0, y1: 1, yref: 'paper',
-            fillcolor: 'rgba(255,193,7,0.2)', line: { width: 0 }
-        }],
-        showlegend: true, legend: { orientation: 'h', y: -0.3 }
-    };
-    Plotly.newPlot('tideChart', [trace1, trace2], layout, { responsive: true });
 }
 
 function formatDT(dt) {
@@ -284,6 +679,190 @@ function formatDT(dt) {
     const d = new Date(dt);
     const pad = n => String(n).padStart(2, '0');
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function formatDurationHours(hours) {
+    if (!hours || hours <= 0) return '-';
+    const h = Math.floor(hours);
+    const m = Math.round((hours - h) * 60);
+    return h > 0 ? (m > 0 ? `${h}h ${m}m` : `${h}h`) : `${m}m`;
+}
+
+function showScheduleDetail(scheduleId) {
+    const schedule = currentSchedulesData.find(s => s.id === scheduleId);
+    if (!schedule) return;
+
+    currentViewingScheduleId = scheduleId;
+    const style = STATUS_STYLES[schedule.status] || STATUS_STYLES['draft'];
+    const durations = schedule.durations || {};
+    const reqLevel = schedule.required_level ? schedule.required_level.toFixed(2) + 'm' : '-';
+
+    const timelineData = [
+        { name: '进坞', start: schedule.enter_time, end: schedule.start_drain_time, color: PROCESS_COLORS['进坞'] },
+        { name: '排水', start: schedule.start_drain_time, end: schedule.start_repair_time, color: PROCESS_COLORS['排水'] },
+        { name: '修补', start: schedule.start_repair_time, end: schedule.start_oil_time || schedule.exit_time, color: PROCESS_COLORS['修补'] },
+    ];
+    if (schedule.start_oil_time) {
+        const oilHours = durations['上油'] || 0;
+        let oilEnd = oilHours > 0 ? new Date(new Date(schedule.start_oil_time).getTime() + oilHours * 3600000) : new Date(schedule.exit_time);
+        timelineData.push({ name: '上油', start: schedule.start_oil_time, end: oilEnd, color: PROCESS_COLORS['上油'] });
+        if (oilEnd < new Date(schedule.exit_time)) {
+            timelineData.push({ name: '等待出坞', start: oilEnd, end: schedule.exit_time, color: PROCESS_COLORS['等待出坞'] });
+        }
+    }
+    timelineData.push({ name: '出坞', start: schedule.exit_time, end: schedule.exit_time, color: PROCESS_COLORS['进坞'] });
+
+    const totalHours = ((new Date(schedule.exit_time) - new Date(schedule.enter_time)) / 3600000).toFixed(1);
+    const processHours = (durations['排水'] + durations['修补'] + durations['上油']).toFixed(1);
+
+    let timelineHtml = '<div class="mb-3"><strong>时间线：</strong><div class="d-flex gap-1 align-items-center flex-wrap">';
+    timelineData.forEach((item, idx) => {
+        const isPoint = item.start === item.end;
+        if (isPoint) {
+            timelineHtml += `<div class="d-flex align-items-center"><span class="legend-color me-1" style="background:${item.color};border-radius:50%;width:10px;height:10px;"></span><small>${item.name} ${formatDT(item.start)}</small></div>`;
+        } else {
+            const dur = ((new Date(item.end) - new Date(item.start)) / 3600000).toFixed(1);
+            timelineHtml += `<div class="d-flex align-items-center"><span class="legend-color me-1" style="background:${item.color};"></span><small>${item.name}: ${formatDT(item.start)} ~ ${formatDT(item.end)} (${dur}h)</small></div>`;
+        }
+        if (idx < timelineData.length - 1) {
+            timelineHtml += '<span class="text-muted">→</span>';
+        }
+    });
+    timelineHtml += '</div></div>';
+
+    document.getElementById('detailModalTitle').innerHTML = `
+        ${schedule.ship_code} - ${schedule.ship_name}
+        <span class="badge ${style.badge} ms-2">${style.label}</span>
+    `;
+
+    document.getElementById('detailModalBody').innerHTML = `
+        <div class="row g-3">
+            <div class="col-md-6">
+                <table class="table table-sm table-borderless">
+                    <tr><th style="width:30%;">船只</th><td>${schedule.ship_code} - ${schedule.ship_name}</td></tr>
+                    <tr><th>优先级</th><td><span class="badge bg-info">${schedule.ship_priority}</span></td></tr>
+                    <tr><th>吃水</th><td>${shipMap[schedule.ship_id]?.draft || '-'}m</td></tr>
+                    <tr><th>船坞</th><td>${schedule.dock_code} - ${schedule.dock_name}</td></tr>
+                    <tr><th>船坞最低水位</th><td>${dockMap[schedule.dock_id]?.min_water_level || '-'}m</td></tr>
+                    <tr><th>要求水位</th><td><strong>${reqLevel}</strong></td></tr>
+                </table>
+            </div>
+            <div class="col-md-6">
+                <table class="table table-sm table-borderless">
+                    <tr><th style="width:30%;">总耗时</th><td>${totalHours}h（工序${processHours}h）</td></tr>
+                    <tr><th>排水</th><td>${formatDurationHours(durations['排水'])}</td></tr>
+                    <tr><th>修补</th><td>${formatDurationHours(durations['修补'])}</td></tr>
+                    <tr><th>上油</th><td>${formatDurationHours(durations['上油'])}</td></tr>
+                    <tr><th>创建时间</th><td>${formatDT(schedule.created_at)}</td></tr>
+                    <tr><th>排程ID</th><td><code>#${schedule.id}</code></td></tr>
+                </table>
+            </div>
+        </div>
+        ${timelineHtml}
+        ${schedule.conflict_reason ? `
+        <div class="alert alert-danger mt-3">
+            <strong>冲突原因：</strong>${schedule.conflict_reason}
+        </div>` : ''}
+    `;
+
+    const confirmBtn = document.getElementById('detailConfirmBtn');
+    if (schedule.status === 'draft') {
+        confirmBtn.style.display = 'inline-block';
+        confirmBtn.textContent = '确认此排程';
+        confirmBtn.onclick = () => confirmSingleSchedule(scheduleId);
+    } else {
+        confirmBtn.style.display = 'none';
+    }
+
+    document.getElementById('detailDeleteBtn').onclick = () => {
+        if (confirm('确定删除此排程？')) {
+            deleteSchedule(scheduleId);
+            bootstrap.Modal.getInstance(document.getElementById('scheduleDetailModal')).hide();
+        }
+    };
+
+    new bootstrap.Modal(document.getElementById('scheduleDetailModal')).show();
+}
+
+async function confirmSingleSchedule(scheduleId) {
+    const schedule = currentSchedulesData.find(s => s.id === scheduleId);
+    if (!schedule || schedule.status !== 'draft') return;
+
+    if (!confirm(`确认将 ${schedule.ship_code} 的排程确认为正式排程？`)) return;
+
+    const res = await fetch(`${SCHEDULE_API}/confirm-drafts`, { method: 'POST' });
+    if (res.ok) {
+        const result = await res.json();
+        alert(`确认完成`);
+        loadSchedules();
+        bootstrap.Modal.getInstance(document.getElementById('scheduleDetailModal')).hide();
+    } else {
+        alert('确认失败');
+    }
+}
+
+function showAlgorithmInfo() {
+    if (!algorithmInfo) {
+        alert('暂无算法信息');
+        return;
+    }
+
+    let html = '<table class="table table-sm table-borderless">';
+    for (const [key, value] of Object.entries(algorithmInfo)) {
+        const displayKey = {
+            'backtracking_enabled': '回溯优化',
+            'max_backtrack_attempts': '最大回溯次数',
+            'scheduling_horizon': '调度时间范围',
+            'tide_points_used': '使用的潮位点数'
+        }[key] || key;
+        const displayValue = typeof value === 'boolean' ? (value ? '已启用' : '未启用') : value;
+        html += `<tr><th style="width:40%;">${displayKey}</th><td>${displayValue}</td></tr>`;
+    }
+    html += '</table>';
+    html += '<div class="alert alert-info mt-3"><small>' +
+        '<strong>算法说明：</strong><br>' +
+        '1. 按船只优先级从高到低排序<br>' +
+        '2. 为每艘船在所有可选船坞中搜索满足潮位窗口的可行方案<br>' +
+        '3. 综合考虑船坞利用率(目标70%)和工序效率选择最优方案<br>' +
+        '4. 高优先级船只(≥5)可触发回溯，尝试调整低优先级船只排程<br>' +
+        '5. 自动检测船坞冲突，确保同一时间同一船坞只有一艘船' +
+        '</small></div>';
+
+    document.getElementById('algorithmInfoBody').innerHTML = html;
+    new bootstrap.Modal(document.getElementById('algorithmInfoModal')).show();
+}
+
+async function loadSchedules() {
+    const status = document.getElementById('filterStatus').value;
+    const dock_id = document.getElementById('filterDock').value;
+    const ship_id = document.getElementById('filterShip').value;
+    const from_date = document.getElementById('filterFromDate').value;
+    const to_date = document.getElementById('filterToDate').value;
+
+    let url = SCHEDULE_API + '?';
+    if (status) url += `status=${status}&`;
+    if (dock_id) url += `dock_id=${dock_id}&`;
+    if (ship_id) url += `ship_id=${ship_id}&`;
+    if (from_date) url += `from_date=${from_date}&`;
+    if (to_date) url += `to_date=${to_date}&`;
+
+    const [schedules, unscheduledShips] = await Promise.all([
+        fetch(url).then(r => r.json()),
+        fetch(SCHEDULE_API + '/unscheduled-ships').then(r => r.json())
+    ]);
+
+    currentSchedulesData = schedules;
+
+    const validSchedules = schedules.filter(s => s.status !== 'conflict');
+    const conflictSchedules = schedules.filter(s => s.status === 'conflict');
+
+    renderSwimLaneGantt(validSchedules, conflictSchedules, 'savedGantt', '排程总览');
+    renderScheduleTable(schedules);
+    renderConflictTable(conflictSchedules);
+    renderUnscheduledShips(unscheduledShips);
+
+    document.getElementById('unscheduledBadge').textContent = unscheduledShips.length;
+    document.getElementById('conflictBadge').textContent = conflictSchedules.length;
 }
 
 (async function init() {
