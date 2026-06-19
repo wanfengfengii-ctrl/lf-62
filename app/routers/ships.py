@@ -12,7 +12,6 @@ class ShipIn(BaseModel):
     code: str = Field(..., min_length=1, max_length=20)
     name: str = Field(..., min_length=1, max_length=50)
     draft: float = Field(..., gt=0)
-    priority: int = Field(default=0, ge=0)
 
 
 class ShipOut(ShipIn):
@@ -82,5 +81,7 @@ def delete_ship(ship_id: int, db: Session = Depends(get_db)):
 
 
 def _invalidate_ship_schedules(db: Session, ship_id: int):
-    from app.scheduler import auto_recalculate_schedules
-    auto_recalculate_schedules(db, target_ship_ids=[ship_id])
+    db.query(models.Schedule).filter(models.Schedule.ship_id == ship_id).update(
+        {models.Schedule.status: "draft"}
+    )
+    db.commit()

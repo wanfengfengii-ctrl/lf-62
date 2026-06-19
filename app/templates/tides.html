@@ -7,10 +7,9 @@
 </div>
 
 <div class="card mb-4">
-    <div class="card-header" id="formCardHeader">新增潮位记录</div>
+    <div class="card-header">新增潮位记录</div>
     <div class="card-body">
         <form id="tideForm" class="row g-3">
-            <input type="hidden" id="tideId">
             <div class="col-md-3">
                 <label class="form-label">日期 *</label>
                 <input type="date" class="form-control" id="tideDate" required>
@@ -24,7 +23,7 @@
                 <input type="number" step="0.01" min="0.01" class="form-control" id="tideLevel" required>
             </div>
             <div class="col-md-3 d-flex align-items-end">
-                <button type="submit" class="btn btn-primary me-2" id="submitBtn">添加</button>
+                <button type="submit" class="btn btn-primary me-2">添加</button>
                 <button type="button" class="btn btn-secondary" id="resetBtn">重置</button>
             </div>
         </form>
@@ -77,7 +76,6 @@ async function loadTides() {
         <tr>
             <td>${t.tide_date}</td><td>${t.tide_time}</td><td>${t.water_level}</td>
             <td>
-                <button class="btn btn-sm btn-outline-primary me-1" onclick='editTide(${JSON.stringify(t)})'>编辑</button>
                 <button class="btn btn-sm btn-outline-danger" onclick="deleteTide(${t.id})">删除</button>
             </td>
         </tr>
@@ -90,30 +88,8 @@ async function deleteTide(id) {
     loadTides();
 }
 
-function editTide(tide) {
-    document.getElementById('tideId').value = tide.id;
-    document.getElementById('tideDate').value = tide.tide_date;
-    document.getElementById('tideTime').value = tide.tide_time;
-    document.getElementById('tideLevel').value = tide.water_level;
-    document.getElementById('submitBtn').textContent = '保存';
-    document.getElementById('formCardHeader').textContent = '编辑潮位记录';
-    document.getElementById('formError').textContent = '';
-    document.getElementById('tideForm').scrollIntoView({ behavior: 'smooth' });
-}
-
-function resetForm() {
-    document.getElementById('tideForm').reset();
-    document.getElementById('tideId').value = '';
-    document.getElementById('submitBtn').textContent = '添加';
-    document.getElementById('formCardHeader').textContent = '新增潮位记录';
-    document.getElementById('formError').textContent = '';
-    const today = new Date();
-    document.getElementById('tideDate').value = today.toISOString().slice(0, 10);
-}
-
 document.getElementById('tideForm').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const id = document.getElementById('tideId').value;
     const dateVal = document.getElementById('tideDate').value;
     const timeVal = document.getElementById('tideTime').value;
     const levelVal = parseFloat(document.getElementById('tideLevel').value);
@@ -121,14 +97,13 @@ document.getElementById('tideForm').addEventListener('submit', async (e) => {
         document.getElementById('formError').textContent = '请正确填写所有字段（潮位必须大于0）';
         return;
     }
-    const url = id ? `${API_URL}/${id}` : API_URL;
-    const method = id ? 'PUT' : 'POST';
-    const res = await fetch(url, {
-        method, headers: { 'Content-Type': 'application/json' },
+    const res = await fetch(API_URL, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tide_date: dateVal, tide_time: timeVal, water_level: levelVal })
     });
     if (res.ok) {
-        resetForm();
+        document.getElementById('tideForm').reset();
+        document.getElementById('formError').textContent = '';
         loadTides();
     } else {
         const err = await res.json();
@@ -136,7 +111,10 @@ document.getElementById('tideForm').addEventListener('submit', async (e) => {
     }
 });
 
-document.getElementById('resetBtn').addEventListener('click', resetForm);
+document.getElementById('resetBtn').addEventListener('click', () => {
+    document.getElementById('tideForm').reset();
+    document.getElementById('formError').textContent = '';
+});
 
 async function loadSampleData() {
     const today = new Date();

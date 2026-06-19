@@ -1,15 +1,9 @@
 {% extends "base.html" %}
 {% block title %}修船任务管理{% endblock %}
-{% block extra_css %}
-<style>
-.task-detail-card { border-left: 4px solid #0d6efd; }
-.requirement-section { background: #f8f9fa; border-radius: 8px; padding: 12px; }
-</style>
-{% endblock %}
 {% block content %}
 <h2>修船任务管理</h2>
 <div class="alert alert-info">
-    <strong>说明：</strong>为每艘船配置排水、修补、上油三道工序的时长（小时）。可为每道工序配置所需物料和班组工时。工序变更会触发相关排程重新计算。
+    <strong>说明：</strong>为每艘船配置排水、修补、上油三道工序的时长（小时）。每艘船每道工序只能配置一条。工序时长必须大于0。
 </div>
 
 <div class="card mb-4">
@@ -45,108 +39,25 @@
     </div>
 </div>
 
-<div class="card mb-4">
+<div class="card">
     <div class="card-header">修船任务列表</div>
     <div class="card-body">
-        <table class="table table-sm">
+        <table class="table table-striped">
             <thead>
                 <tr>
-                    <th>船只编号</th><th>船只名称</th><th>工序类型</th><th>时长(小时)</th>
-                    <th>物料需求</th><th>工时需求</th><th>操作</th>
+                    <th>船只编号</th><th>船只名称</th><th>工序类型</th><th>时长(小时)</th><th>操作</th>
                 </tr>
             </thead>
             <tbody id="taskTableBody"></tbody>
         </table>
     </div>
 </div>
-
-<div class="modal fade" id="taskDetailModal" tabindex="-1">
-    <div class="modal-dialog modal-lg">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title" id="taskDetailTitle">任务详情</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-            </div>
-            <div class="modal-body">
-                <input type="hidden" id="detailTaskId">
-                <div class="row mb-3">
-                    <div class="col-md-6">
-                        <div class="card requirement-section mb-3">
-                            <div class="d-flex justify-content-between align-items-center mb-2">
-                                <h6 class="mb-0"><strong>物料需求</strong></h6>
-                            </div>
-                            <form id="materialReqForm" class="row g-2 mb-2">
-                                <div class="col-md-5">
-                                    <select class="form-select form-select-sm" id="mrMaterial"></select>
-                                </div>
-                                <div class="col-md-3">
-                                    <input type="number" class="form-control form-control-sm" id="mrQty" step="0.01" min="0.01" placeholder="数量">
-                                </div>
-                                <div class="col-md-4">
-                                    <button type="button" class="btn btn-sm btn-primary" onclick="addMaterialRequirement()">添加物料</button>
-                                </div>
-                            </form>
-                            <table class="table table-sm" id="materialReqTable">
-                                <thead><tr><th>物料</th><th>数量</th><th>单位</th><th>操作</th></tr></thead>
-                                <tbody></tbody>
-                            </table>
-                        </div>
-                    </div>
-                    <div class="col-md-6">
-                        <div class="card requirement-section mb-3">
-                            <div class="d-flex justify-content-between align-items-center mb-2">
-                                <h6 class="mb-0"><strong>班组工时需求</strong></h6>
-                            </div>
-                            <form id="laborReqForm" class="row g-2 mb-2">
-                                <div class="col-md-4">
-                                    <select class="form-select form-select-sm" id="lrCrewType">
-                                        <option value="木工">木工</option>
-                                        <option value="油工">油工</option>
-                                        <option value="杂工">杂工</option>
-                                        <option value="起重">起重</option>
-                                        <option value="其他">其他</option>
-                                    </select>
-                                </div>
-                                <div class="col-md-3">
-                                    <select class="form-select form-select-sm" id="lrCrewId">
-                                        <option value="">指定班组(可选)</option>
-                                    </select>
-                                </div>
-                                <div class="col-md-3">
-                                    <input type="number" class="form-control form-control-sm" id="lrHours" step="0.5" min="0.5" placeholder="工时">
-                                </div>
-                                <div class="col-md-2">
-                                    <button type="button" class="btn btn-sm btn-primary" onclick="addLaborRequirement()">添加工时</button>
-                                </div>
-                            </form>
-                            <table class="table table-sm" id="laborReqTable">
-                                <thead><tr><th>工种</th><th>指定班组</th><th>工时</th><th>操作</th></tr></thead>
-                                <tbody></tbody>
-                            </table>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
-            </div>
-        </div>
-    </div>
-</div>
-
 {% endblock %}
 {% block extra_js %}
 <script>
 const TASK_API = '/api/tasks';
 const SHIP_API = '/api/ships';
-const MATERIAL_API = '/api/materials';
-const CREW_API = '/api/crews';
 let shipMap = {};
-let materialMap = {};
-let crewMap = {};
-let currentDetailTaskId = null;
-let currentMaterialReqs = [];
-let currentLaborReqs = [];
 
 async function loadShips() {
     const res = await fetch(SHIP_API);
@@ -160,77 +71,26 @@ async function loadShips() {
     });
 }
 
-async function loadMaterials() {
-    const res = await fetch(MATERIAL_API);
-    const materials = await res.json();
-    materialMap = {};
-    const sel = document.getElementById('mrMaterial');
-    sel.innerHTML = '<option value="">选择物料</option>';
-    materials.forEach(m => {
-        materialMap[m.id] = m;
-        sel.innerHTML += `<option value="${m.id}">${m.code} ${m.name} (${m.unit})</option>`;
-    });
-}
-
-async function loadCrews() {
-    const res = await fetch(CREW_API);
-    const crews = await res.json();
-    crewMap = {};
-    const sel = document.getElementById('lrCrewId');
-    sel.innerHTML = '<option value="">指定班组(可选)</option>';
-    crews.forEach(c => {
-        crewMap[c.id] = c;
-        sel.innerHTML += `<option value="${c.id}">${c.code} ${c.name} (${c.crew_type})</option>`;
-    });
-}
-
 async function loadTasks() {
     const res = await fetch(TASK_API);
     const tasks = await res.json();
     const tbody = document.getElementById('taskTableBody');
-    if (!tasks.length) {
-        tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">暂无数据</td></tr>';
-        return;
-    }
-    const rows = [];
-    for (const t of tasks) {
+    tbody.innerHTML = tasks.map(t => {
         const ship = shipMap[t.ship_id] || { code: '?', name: '?' };
-        const [matReqs, labReqs] = await Promise.all([
-            fetch(`${TASK_API}/${t.id}/material-requirements`).then(r => r.json()),
-            fetch(`${TASK_API}/${t.id}/labor-requirements`).then(r => r.json())
-        ]);
-        rows.push(`
-            <tr>
-                <td>${ship.code}</td>
-                <td>${ship.name}</td>
-                <td><span class="badge bg-primary">${t.process_type}</span></td>
-                <td>${t.duration_hours}h</td>
-                <td>${matReqs.length ? `<span class="badge bg-info">${matReqs.length}种</span>` : '<small class="text-muted">未配置</small>'}</td>
-                <td>${labReqs.length ? `<span class="badge bg-warning text-dark">${labReqs.reduce((s,r)=>s+r.required_hours,0)}h</span>` : '<small class="text-muted">未配置</small>'}</td>
-                <td>
-                    <button class="btn btn-sm btn-outline-primary me-1" onclick='editTask(${JSON.stringify(t)})'>编辑</button>
-                    <button class="btn btn-sm btn-outline-info me-1" onclick="showTaskDetail(${t.id}, '${t.process_type}', '${ship.code} ${ship.name}')">配置需求</button>
-                    <button class="btn btn-sm btn-outline-danger" onclick="deleteTask(${t.id})">删除</button>
-                </td>
-            </tr>
-        `);
-    }
-    tbody.innerHTML = rows.join('');
+        return `
+        <tr>
+            <td>${ship.code}</td><td>${ship.name}</td><td>${t.process_type}</td><td>${t.duration_hours}</td>
+            <td>
+                <button class="btn btn-sm btn-outline-danger" onclick="deleteTask(${t.id})">删除</button>
+            </td>
+        </tr>`;
+    }).join('') || '<tr><td colspan="5" class="text-center text-muted">暂无数据</td></tr>';
 }
 
 function resetForm() {
     document.getElementById('taskForm').reset();
     document.getElementById('taskId').value = '';
     document.getElementById('submitBtn').textContent = '添加';
-    document.getElementById('formError').textContent = '';
-}
-
-function editTask(task) {
-    document.getElementById('taskId').value = task.id;
-    document.getElementById('taskShip').value = task.ship_id;
-    document.getElementById('taskType').value = task.process_type;
-    document.getElementById('taskDuration').value = task.duration_hours;
-    document.getElementById('submitBtn').textContent = '保存';
     document.getElementById('formError').textContent = '';
 }
 
@@ -242,7 +102,6 @@ async function deleteTask(id) {
 
 document.getElementById('taskForm').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const id = document.getElementById('taskId').value;
     const ship_id = parseInt(document.getElementById('taskShip').value);
     const process_type = document.getElementById('taskType').value;
     const duration_hours = parseFloat(document.getElementById('taskDuration').value);
@@ -252,10 +111,8 @@ document.getElementById('taskForm').addEventListener('submit', async (e) => {
         return;
     }
 
-    const url = id ? `${TASK_API}/${id}` : TASK_API;
-    const method = id ? 'PUT' : 'POST';
-    const res = await fetch(url, {
-        method, headers: { 'Content-Type': 'application/json' },
+    const res = await fetch(TASK_API, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ship_id, process_type, duration_hours })
     });
     if (res.ok) {
@@ -269,121 +126,8 @@ document.getElementById('taskForm').addEventListener('submit', async (e) => {
 
 document.getElementById('resetBtn').addEventListener('click', resetForm);
 
-async function showTaskDetail(taskId, processType, shipLabel) {
-    currentDetailTaskId = taskId;
-    document.getElementById('detailTaskId').value = taskId;
-    document.getElementById('taskDetailTitle').textContent = `${shipLabel} - ${processType} 需求配置`;
-    const [matReqs, labReqs] = await Promise.all([
-        fetch(`${TASK_API}/${taskId}/material-requirements`).then(r => r.json()),
-        fetch(`${TASK_API}/${taskId}/labor-requirements`).then(r => r.json())
-    ]);
-    currentMaterialReqs = matReqs;
-    currentLaborReqs = labReqs;
-    renderMaterialReqs();
-    renderLaborReqs();
-    new bootstrap.Modal(document.getElementById('taskDetailModal')).show();
-}
-
-function renderMaterialReqs() {
-    const tbody = document.querySelector('#materialReqTable tbody');
-    if (!currentMaterialReqs.length) {
-        tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">暂无物料需求</td></tr>';
-        return;
-    }
-    tbody.innerHTML = currentMaterialReqs.map(r => `
-        <tr>
-            <td><code>${r.material_code}</code> ${r.material_name}</td>
-            <td>${r.quantity}</td>
-            <td>${r.unit}</td>
-            <td><button class="btn btn-sm btn-outline-danger" onclick="deleteMaterialRequirement(${r.id})">删除</button></td>
-        </tr>
-    `).join('');
-}
-
-function renderLaborReqs() {
-    const tbody = document.querySelector('#laborReqTable tbody');
-    if (!currentLaborReqs.length) {
-        tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">暂无工时需求</td></tr>';
-        return;
-    }
-    tbody.innerHTML = currentLaborReqs.map(r => `
-        <tr>
-            <td><span class="badge bg-info">${r.crew_type}</span></td>
-            <td>${r.crew_code ? r.crew_code + ' ' + r.crew_name : '<small class="text-muted">任意</small>'}</td>
-            <td>${r.required_hours}h</td>
-            <td><button class="btn btn-sm btn-outline-danger" onclick="deleteLaborRequirement(${r.id})">删除</button></td>
-        </tr>
-    `).join('');
-}
-
-async function addMaterialRequirement() {
-    const material_id = parseInt(document.getElementById('mrMaterial').value);
-    const quantity = parseFloat(document.getElementById('mrQty').value);
-    if (!material_id || !quantity || quantity <= 0) {
-        alert('请选择物料并填写有效数量');
-        return;
-    }
-    const res = await fetch(`${TASK_API}/material-requirements`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ task_id: currentDetailTaskId, material_id, quantity })
-    });
-    if (res.ok) {
-        document.getElementById('mrQty').value = '';
-        const matReqs = await fetch(`${TASK_API}/${currentDetailTaskId}/material-requirements`).then(r => r.json());
-        currentMaterialReqs = matReqs;
-        renderMaterialReqs();
-    } else {
-        const err = await res.json();
-        alert(err.detail || '保存失败');
-    }
-}
-
-async function deleteMaterialRequirement(reqId) {
-    if (!confirm('确定删除此物料需求？')) return;
-    await fetch(`${TASK_API}/material-requirements/${reqId}`, { method: 'DELETE' });
-    const matReqs = await fetch(`${TASK_API}/${currentDetailTaskId}/material-requirements`).then(r => r.json());
-    currentMaterialReqs = matReqs;
-    renderMaterialReqs();
-    loadTasks();
-}
-
-async function addLaborRequirement() {
-    const crew_type = document.getElementById('lrCrewType').value;
-    const crew_id_val = document.getElementById('lrCrewId').value;
-    const crew_id = crew_id_val ? parseInt(crew_id_val) : null;
-    const required_hours = parseFloat(document.getElementById('lrHours').value);
-    if (!required_hours || required_hours <= 0) {
-        alert('请填写有效工时');
-        return;
-    }
-    const res = await fetch(`${TASK_API}/labor-requirements`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ task_id: currentDetailTaskId, crew_type, crew_id, required_hours })
-    });
-    if (res.ok) {
-        document.getElementById('lrHours').value = '';
-        const labReqs = await fetch(`${TASK_API}/${currentDetailTaskId}/labor-requirements`).then(r => r.json());
-        currentLaborReqs = labReqs;
-        renderLaborReqs();
-    } else {
-        const err = await res.json();
-        alert(err.detail || '保存失败');
-    }
-}
-
-async function deleteLaborRequirement(reqId) {
-    if (!confirm('确定删除此时工需求？')) return;
-    await fetch(`${TASK_API}/labor-requirements/${reqId}`, { method: 'DELETE' });
-    const labReqs = await fetch(`${TASK_API}/${currentDetailTaskId}/labor-requirements`).then(r => r.json());
-    currentLaborReqs = labReqs;
-    renderLaborReqs();
-    loadTasks();
-}
-
 (async function init() {
-    await Promise.all([loadShips(), loadMaterials(), loadCrews()]);
+    await loadShips();
     loadTasks();
 })();
 </script>
