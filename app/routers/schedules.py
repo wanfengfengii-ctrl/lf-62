@@ -3,7 +3,7 @@ import io
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from typing import List, Optional
+from typing import List, Optional, Tuple
 from pydantic import BaseModel
 from datetime import date, datetime
 from app import models
@@ -256,31 +256,55 @@ def batch_preview_schedule(data: BatchScheduleGenerateIn, db: Session = Depends(
     return result
 
 
+def _parse_datetime(value) -> Optional[datetime]:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value.replace('Z', '+00:00'))
+        except ValueError:
+            return None
+    return None
+
+
 @router.post("/batch-save")
 def batch_save_schedule(data: BatchScheduleSaveIn, db: Session = Depends(get_db)):
     saved = []
     errors = []
 
     for item in data.schedules:
-        ship = db.query(models.Ship).filter(models.Ship.id == item.get("ship_id")).first()
+        ship_id = item.get("ship_id")
+        ship = db.query(models.Ship).filter(models.Ship.id == ship_id).first()
         dock = db.query(models.Dock).filter(models.Dock.id == item.get("dock_id")).first()
         if not ship or not dock:
-            errors.append({"ship_id": item.get("ship_id"), "error": "船只或船坞不存在"})
+            errors.append({"ship_id": ship_id, "error": "船只或船坞不存在"})
+            continue
+
+        enter_time = _parse_datetime(item.get("enter_time"))
+        start_drain_time = _parse_datetime(item.get("start_drain_time"))
+        start_repair_time = _parse_datetime(item.get("start_repair_time"))
+        start_oil_time = _parse_datetime(item.get("start_oil_time"))
+        exit_time = _parse_datetime(item.get("exit_time"))
+
+        if not all([enter_time, start_drain_time, start_repair_time, exit_time]):
+            errors.append({"ship_id": ship_id, "error": "时间格式无效"})
             continue
 
         db.query(models.Schedule).filter(
-            models.Schedule.ship_id == item["ship_id"],
+            models.Schedule.ship_id == ship_id,
             models.Schedule.status.in_(["draft", "conflict"])
         ).delete()
 
         schedule = models.Schedule(
-            ship_id=item["ship_id"],
+            ship_id=ship_id,
             dock_id=item["dock_id"],
-            enter_time=item["enter_time"],
-            start_drain_time=item["start_drain_time"],
-            start_repair_time=item["start_repair_time"],
-            start_oil_time=item.get("start_oil_time"),
-            exit_time=item["exit_time"],
+            enter_time=enter_time,
+            start_drain_time=start_drain_time,
+            start_repair_time=start_repair_time,
+            start_oil_time=start_oil_time,
+            exit_time=exit_time,
             status="draft",
             conflict_reason=None,
             created_at=datetime.now()
@@ -301,6 +325,15 @@ def confirm_draft_schedules(db: Session = Depends(get_db)):
         ship = db.query(models.Ship).filter(models.Ship.id == s.ship_id).first()
         dock = db.query(models.Dock).filter(models.Dock.id == s.dock_id).first()
         if not ship or not dock:
+            continue
+
+        resource_ok, resource_issues = scheduler.check_schedule_resources(
+            db, s.ship_id, s.enter_time.date(), s.exit_time.date(),
+            exclude_schedule_ids=[s.id]
+        )
+        if not resource_ok:
+            s.conflict_reason = "资源不足，不能确认为正式排程：" + "；".join(resource_issues)
+            s.status = "conflict"
             continue
 
         required_level = max(ship.draft, dock.min_water_level)
@@ -356,6 +389,79 @@ def confirm_draft_schedules(db: Session = Depends(get_db)):
     return {"confirmed": confirmed, "conflicts": conflict_count}
 
 
+def _confirm_single_schedule(db: Session, schedule: models.Schedule) -> Tuple[bool, Optional[str]]:
+    ship = db.query(models.Ship).filter(models.Ship.id == schedule.ship_id).first()
+    dock = db.query(models.Dock).filter(models.Dock.id == schedule.dock_id).first()
+    if not ship or not dock:
+        return False, "船只或船坞不存在"
+
+    resource_ok, resource_issues = scheduler.check_schedule_resources(
+        db, schedule.ship_id, schedule.enter_time.date(), schedule.exit_time.date(),
+        exclude_schedule_ids=[schedule.id]
+    )
+    if not resource_ok:
+        return False, "资源不足，不能确认为正式排程：" + "；".join(resource_issues)
+
+    required_level = max(ship.draft, dock.min_water_level)
+    from datetime import timedelta as _td
+
+    enter_date = schedule.enter_time.date()
+    exit_date = schedule.exit_time.date()
+
+    complete, issues = scheduler.check_tide_data_complete(db, enter_date, exit_date)
+    if not complete:
+        return False, "潮位数据缺失，不能确认为正式排程：" + "；".join(issues)
+
+    tides_in_range = scheduler.get_sorted_tides(
+        db, enter_date - _td(days=1), exit_date + _td(days=1)
+    )
+    if len(tides_in_range) < 2:
+        return False, "潮位数据缺失，不能确认为正式排程"
+
+    enter_level = scheduler.get_water_level_at(tides_in_range, schedule.enter_time)
+    exit_level = scheduler.get_water_level_at(tides_in_range, schedule.exit_time)
+
+    if enter_level is None or enter_level < required_level:
+        return False, f"进坞时水位({enter_level:.2f}m)不满足要求(≥{required_level}m)"
+    if exit_level is None or exit_level < required_level:
+        return False, f"出坞时水位({exit_level:.2f}m)不满足要求(≥{required_level}m)"
+
+    overlapping = db.query(models.Schedule).filter(
+        models.Schedule.id != schedule.id,
+        models.Schedule.dock_id == schedule.dock_id,
+        models.Schedule.status == "confirmed",
+        models.Schedule.enter_time < schedule.exit_time,
+        models.Schedule.exit_time > schedule.enter_time,
+    ).first()
+    if overlapping:
+        conflict_ship = overlapping.ship.code if overlapping.ship else "?"
+        return False, f"与 {conflict_ship} 的排程存在船坞{dock.code}冲突"
+
+    schedule.status = "confirmed"
+    schedule.conflict_reason = None
+    return True, None
+
+
+@router.post("/confirm/{schedule_id}")
+def confirm_single_schedule(schedule_id: int, db: Session = Depends(get_db)):
+    schedule = db.query(models.Schedule).filter(models.Schedule.id == schedule_id).first()
+    if not schedule:
+        raise HTTPException(status_code=404, detail="排程不存在")
+    if schedule.status != "draft":
+        raise HTTPException(status_code=400, detail="只有草稿状态的排程才能确认")
+
+    success, error = _confirm_single_schedule(db, schedule)
+    db.commit()
+
+    if not success:
+        schedule.status = "conflict"
+        schedule.conflict_reason = error
+        db.commit()
+        return {"success": False, "error": error}
+
+    return {"success": True, "message": "排程确认成功", "schedule_id": schedule_id}
+
+
 @router.post("/recalculate")
 def recalculate_schedules(
     ship_ids: Optional[str] = Query(None, description="Comma-separated ship IDs for targeted recalculation"),
@@ -383,6 +489,15 @@ def save_schedule(data: ScheduleSaveIn, db: Session = Depends(get_db)):
     dock = db.query(models.Dock).filter(models.Dock.id == data.dock_id).first()
     if not ship or not dock:
         raise HTTPException(status_code=404, detail="船只或船坞不存在")
+
+    resource_ok, resource_issues = scheduler.check_schedule_resources(
+        db, data.ship_id, data.enter_time.date(), data.exit_time.date()
+    )
+    if not resource_ok:
+        raise HTTPException(
+            status_code=400,
+            detail="资源不足，不能生成正式排程：" + "；".join(resource_issues)
+        )
 
     required_level = max(ship.draft, dock.min_water_level)
     from datetime import timedelta as _td
@@ -447,6 +562,9 @@ def save_schedule(data: ScheduleSaveIn, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(schedule)
 
+    from app.routers.costs import recalculate_ship_costs_and_quotations
+    recalculate_ship_costs_and_quotations(db, [data.ship_id])
+
     return {
         "id": schedule.id,
         "ship_id": schedule.ship_id,
@@ -474,8 +592,11 @@ def delete_schedule(schedule_id: int, db: Session = Depends(get_db)):
     s = db.query(models.Schedule).filter(models.Schedule.id == schedule_id).first()
     if not s:
         raise HTTPException(status_code=404, detail="排程不存在")
+    ship_id = s.ship_id
     db.delete(s)
     db.commit()
+    from app.routers.costs import recalculate_ship_costs_and_quotations
+    recalculate_ship_costs_and_quotations(db, [ship_id])
     return {"ok": True}
 
 
