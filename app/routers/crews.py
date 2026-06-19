@@ -353,24 +353,25 @@ def create_daily_availability(avail_in: DailyAvailabilityIn, db: Session = Depen
     }
 
 
+class BatchAvailabilityIn(BaseModel):
+    crew_ids: List[int]
+    from_date: date
+    to_date: date
+    available_hours: float = 8.0
+    skip_weekends: bool = True
+
+
 @router.post("/availability/batch")
-def batch_create_availability(
-    crew_ids: List[int],
-    from_date: date,
-    to_date: date,
-    available_hours: float = 8.0,
-    skip_weekends: bool = True,
-    db: Session = Depends(get_db)
-):
+def batch_create_availability(data: BatchAvailabilityIn, db: Session = Depends(get_db)):
     created = 0
     updated = 0
-    for crew_id in crew_ids:
+    for crew_id in data.crew_ids:
         c = db.query(models.Crew).filter(models.Crew.id == crew_id).first()
         if not c:
             continue
-        current = from_date
-        while current <= to_date:
-            if skip_weekends and current.weekday() >= 5:
+        current = data.from_date
+        while current <= data.to_date:
+            if data.skip_weekends and current.weekday() >= 5:
                 current += timedelta(days=1)
                 continue
             existing = db.query(models.CrewDailyAvailability).filter(
@@ -378,13 +379,13 @@ def batch_create_availability(
                 models.CrewDailyAvailability.work_date == current
             ).first()
             if existing:
-                existing.available_hours = available_hours
+                existing.available_hours = data.available_hours
                 updated += 1
             else:
                 r = models.CrewDailyAvailability(
                     crew_id=crew_id,
                     work_date=current,
-                    available_hours=available_hours,
+                    available_hours=data.available_hours,
                     used_hours=0
                 )
                 db.add(r)

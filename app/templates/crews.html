@@ -101,7 +101,8 @@
             <select class="form-select form-select-sm" id="filterCrewType" style="width:auto;" onchange="loadCrews()">
                 <option value="">全部类型</option>
                 <option value="木工">木工</option>
-                <option value="油工">杂工</option>
+                <option value="油工">油工</option>
+                <option value="杂工">杂工</option>
                 <option value="起重">起重</option>
                 <option value="其他">其他</option>
             </select>
@@ -278,7 +279,7 @@ function renderAvailabilityView(data) {
     let headerHtml = '<tr><th>班组</th>';
     data.days.forEach(d => {
         const dateObj = new Date(d);
-        const weekday = ['日一二三四五六'[dateObj.getDay()];
+        const weekday = '日一二三四五六'[dateObj.getDay()];
         const weekend = dateObj.getDay() === 0 || dateObj.getDay() === 6;
         headerHtml += `<th class="${weekend ? 'bg-light' : ''}">${d.slice(5)}<br><small>周${weekday}</small></th>`;
     });
@@ -402,13 +403,16 @@ async function batchSaveAvailability() {
     const crew_ids = getSelectedCrewIds();
     const from_date = document.getElementById('batchFromDate').value;
     const to_date = document.getElementById('batchToDate').value;
-    const hours = parseFloat(document.getElementById('batchHours').value) || 0;
+    const available_hours = parseFloat(document.getElementById('batchHours').value) || 0;
     const skip_weekends = document.getElementById('batchSkipWeekend').checked;
     if (!crew_ids.length || !from_date || !to_date) {
         alert('请填写所有必填项');
         return;
     }
-    const res = await fetch(`${CREW_API}/availability/batch?crew_ids=${encodeURIComponent(JSON.stringify(crew_ids))}&from_date=${from_date}&to_date=${to_date}&available_hours=${hours}&skip_weekends=${skip_weekends}`, { method: 'POST'
+    const res = await fetch(`${CREW_API}/availability/batch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ crew_ids, from_date, to_date, available_hours, skip_weekends })
     });
     if (res.ok) {
         const result = await res.json();
