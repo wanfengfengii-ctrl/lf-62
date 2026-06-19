@@ -386,3 +386,189 @@ class CostAlert(Base):
     ship = relationship("Ship")
     quotation = relationship("Quotation")
     cost_calculation = relationship("CostCalculation")
+
+
+INSPECTION_STAGES = ["进坞", "排水", "修补", "上油", "出坞"]
+HAZARD_LEVELS = ["低风险", "一般风险", "较大风险", "重大风险"]
+INSPECTION_STATUS = ["pending", "in_progress", "completed", "cancelled"]
+HAZARD_STATUS = ["open", "rectifying", "rectified", "closed", "overdue"]
+
+
+class InspectionStandard(Base):
+    __tablename__ = "inspection_standards"
+
+    id = Column(Integer, primary_key=True, index=True)
+    code = Column(String, unique=True, index=True, nullable=False)
+    name = Column(String, nullable=False)
+    stage = Column(String, nullable=False)
+    category = Column(String, nullable=True)
+    content = Column(Text, nullable=False)
+    standard_value = Column(String, nullable=True)
+    method = Column(String, nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+    remark = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.now)
+    updated_at = Column(DateTime, nullable=False, default=datetime.now, onupdate=datetime.now)
+
+    risk_items = relationship("RiskItem", back_populates="standard", cascade="all, delete-orphan")
+    inspection_items = relationship("InspectionRecordItem", back_populates="standard")
+
+
+class RiskItem(Base):
+    __tablename__ = "risk_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    standard_id = Column(Integer, ForeignKey("inspection_standards.id"), nullable=False)
+    code = Column(String, unique=True, index=True, nullable=False)
+    name = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    default_hazard_level = Column(String, nullable=False, default="一般风险")
+    consequence = Column(Text, nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+    remark = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.now)
+    updated_at = Column(DateTime, nullable=False, default=datetime.now, onupdate=datetime.now)
+
+    standard = relationship("InspectionStandard", back_populates="risk_items")
+
+
+class ResponsiblePerson(Base):
+    __tablename__ = "responsible_persons"
+
+    id = Column(Integer, primary_key=True, index=True)
+    code = Column(String, unique=True, index=True, nullable=False)
+    name = Column(String, nullable=False)
+    position = Column(String, nullable=True)
+    department = Column(String, nullable=True)
+    phone = Column(String, nullable=True)
+    email = Column(String, nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+    remark = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.now)
+    updated_at = Column(DateTime, nullable=False, default=datetime.now, onupdate=datetime.now)
+
+    responsible_hazards = relationship("Hazard", back_populates="responsible_person", foreign_keys="Hazard.responsible_person_id")
+
+
+class InspectionTask(Base):
+    __tablename__ = "inspection_tasks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    task_no = Column(String, unique=True, index=True, nullable=False)
+    schedule_id = Column(Integer, ForeignKey("schedules.id"), nullable=True)
+    ship_id = Column(Integer, ForeignKey("ships.id"), nullable=False)
+    dock_id = Column(Integer, ForeignKey("docks.id"), nullable=True)
+    stage = Column(String, nullable=False)
+    planned_time = Column(DateTime, nullable=True)
+    actual_start_time = Column(DateTime, nullable=True)
+    actual_end_time = Column(DateTime, nullable=True)
+    inspector = Column(String, nullable=True)
+    status = Column(String, nullable=False, default="pending")
+    remark = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.now)
+    updated_at = Column(DateTime, nullable=False, default=datetime.now, onupdate=datetime.now)
+
+    ship = relationship("Ship")
+    dock = relationship("Dock")
+    schedule = relationship("Schedule")
+    records = relationship("InspectionRecord", back_populates="task", cascade="all, delete-orphan")
+
+
+class InspectionRecord(Base):
+    __tablename__ = "inspection_records"
+
+    id = Column(Integer, primary_key=True, index=True)
+    task_id = Column(Integer, ForeignKey("inspection_tasks.id"), nullable=False)
+    record_time = Column(DateTime, nullable=False, default=datetime.now)
+    inspector = Column(String, nullable=True)
+    weather = Column(String, nullable=True)
+    temperature = Column(String, nullable=True)
+    overall_result = Column(String, nullable=True)
+    remark = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.now)
+
+    task = relationship("InspectionTask", back_populates="records")
+    items = relationship("InspectionRecordItem", back_populates="record", cascade="all, delete-orphan")
+    photos = relationship("InspectionPhoto", back_populates="record", cascade="all, delete-orphan")
+    hazards = relationship("Hazard", back_populates="record", cascade="all, delete-orphan")
+
+
+class InspectionRecordItem(Base):
+    __tablename__ = "inspection_record_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    record_id = Column(Integer, ForeignKey("inspection_records.id"), nullable=False)
+    standard_id = Column(Integer, ForeignKey("inspection_standards.id"), nullable=False)
+    check_result = Column(String, nullable=False)
+    actual_value = Column(String, nullable=True)
+    is_conforming = Column(Boolean, nullable=False, default=True)
+    remark = Column(Text, nullable=True)
+
+    record = relationship("InspectionRecord", back_populates="items")
+    standard = relationship("InspectionStandard", back_populates="inspection_items")
+
+
+class InspectionPhoto(Base):
+    __tablename__ = "inspection_photos"
+
+    id = Column(Integer, primary_key=True, index=True)
+    record_id = Column(Integer, ForeignKey("inspection_records.id"), nullable=False)
+    file_name = Column(String, nullable=False)
+    file_path = Column(String, nullable=False)
+    file_size = Column(Integer, nullable=True)
+    description = Column(String, nullable=True)
+    uploaded_at = Column(DateTime, nullable=False, default=datetime.now)
+
+    record = relationship("InspectionRecord", back_populates="photos")
+
+
+class Hazard(Base):
+    __tablename__ = "hazards"
+
+    id = Column(Integer, primary_key=True, index=True)
+    hazard_no = Column(String, unique=True, index=True, nullable=False)
+    record_id = Column(Integer, ForeignKey("inspection_records.id"), nullable=True)
+    task_id = Column(Integer, ForeignKey("inspection_tasks.id"), nullable=True)
+    schedule_id = Column(Integer, ForeignKey("schedules.id"), nullable=True)
+    ship_id = Column(Integer, ForeignKey("ships.id"), nullable=False)
+    dock_id = Column(Integer, ForeignKey("docks.id"), nullable=True)
+    risk_item_id = Column(Integer, ForeignKey("risk_items.id"), nullable=True)
+    stage = Column(String, nullable=True)
+    title = Column(String, nullable=False)
+    description = Column(Text, nullable=False)
+    hazard_level = Column(String, nullable=False, default="一般风险")
+    location = Column(String, nullable=True)
+    responsible_person_id = Column(Integer, ForeignKey("responsible_persons.id"), nullable=True)
+    status = Column(String, nullable=False, default="open")
+    discovered_time = Column(DateTime, nullable=False, default=datetime.now)
+    deadline = Column(Date, nullable=True)
+    rectified_time = Column(DateTime, nullable=True)
+    closed_time = Column(DateTime, nullable=True)
+    rectification_measure = Column(Text, nullable=True)
+    rectification_result = Column(Text, nullable=True)
+    remark = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.now)
+    updated_at = Column(DateTime, nullable=False, default=datetime.now, onupdate=datetime.now)
+
+    record = relationship("InspectionRecord", back_populates="hazards")
+    task = relationship("InspectionTask")
+    schedule = relationship("Schedule")
+    ship = relationship("Ship")
+    dock = relationship("Dock")
+    risk_item = relationship("RiskItem")
+    responsible_person = relationship("ResponsiblePerson", back_populates="responsible_hazards", foreign_keys=[responsible_person_id])
+    rectification_records = relationship("RectificationRecord", back_populates="hazard", cascade="all, delete-orphan")
+
+
+class RectificationRecord(Base):
+    __tablename__ = "rectification_records"
+
+    id = Column(Integer, primary_key=True, index=True)
+    hazard_id = Column(Integer, ForeignKey("hazards.id"), nullable=False)
+    action = Column(String, nullable=False)
+    description = Column(Text, nullable=False)
+    operator = Column(String, nullable=True)
+    record_time = Column(DateTime, nullable=False, default=datetime.now)
+    remark = Column(Text, nullable=True)
+
+    hazard = relationship("Hazard", back_populates="rectification_records")

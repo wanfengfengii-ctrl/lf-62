@@ -49,3 +49,8 @@ async def costs_page(request: Request):
 @router.get("/quotations", response_class=HTMLResponse)
 async def quotations_page(request: Request):
     return templates.TemplateResponse("quotations.html", {"request": request})
+
+
+@router.get("/inspections", response_class=HTMLResponse)
+async def inspections_page(request: Request):
+    return templates.TemplateResponse("inspections.html", {"request": request})

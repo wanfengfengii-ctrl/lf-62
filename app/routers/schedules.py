@@ -310,6 +310,9 @@ def batch_save_schedule(data: BatchScheduleSaveIn, db: Session = Depends(get_db)
             created_at=datetime.now()
         )
         db.add(schedule)
+        db.flush()
+        from app.routers.inspections import _sync_tasks_for_schedule
+        _sync_tasks_for_schedule(db, schedule)
         saved.append(item.get("ship_code", ""))
 
     db.commit()
@@ -318,6 +321,7 @@ def batch_save_schedule(data: BatchScheduleSaveIn, db: Session = Depends(get_db)
 
 @router.post("/confirm-drafts")
 def confirm_draft_schedules(db: Session = Depends(get_db)):
+    from app.routers.inspections import check_ship_high_risk_unrectified, _sync_tasks_for_schedule
     draft_schedules = db.query(models.Schedule).filter(models.Schedule.status == "draft").all()
 
     confirmed = 0
@@ -325,6 +329,12 @@ def confirm_draft_schedules(db: Session = Depends(get_db)):
         ship = db.query(models.Ship).filter(models.Ship.id == s.ship_id).first()
         dock = db.query(models.Dock).filter(models.Dock.id == s.dock_id).first()
         if not ship or not dock:
+            continue
+
+        high_risk = check_ship_high_risk_unrectified(db, s.ship_id)
+        if high_risk:
+            s.conflict_reason = "存在未整改的高风险隐患，不能确认为正式排程：" + "；".join(high_risk)
+            s.status = "conflict"
             continue
 
         resource_ok, resource_issues = scheduler.check_schedule_resources(
@@ -382,6 +392,7 @@ def confirm_draft_schedules(db: Session = Depends(get_db)):
 
         s.status = "confirmed"
         s.conflict_reason = None
+        _sync_tasks_for_schedule(db, s)
         confirmed += 1
 
     db.commit()
@@ -390,10 +401,15 @@ def confirm_draft_schedules(db: Session = Depends(get_db)):
 
 
 def _confirm_single_schedule(db: Session, schedule: models.Schedule) -> Tuple[bool, Optional[str]]:
+    from app.routers.inspections import check_ship_high_risk_unrectified, _sync_tasks_for_schedule
     ship = db.query(models.Ship).filter(models.Ship.id == schedule.ship_id).first()
     dock = db.query(models.Dock).filter(models.Dock.id == schedule.dock_id).first()
     if not ship or not dock:
         return False, "船只或船坞不存在"
+
+    high_risk = check_ship_high_risk_unrectified(db, schedule.ship_id)
+    if high_risk:
+        return False, "存在未整改的高风险隐患，不能确认为正式排程：" + "；".join(high_risk)
 
     resource_ok, resource_issues = scheduler.check_schedule_resources(
         db, schedule.ship_id, schedule.enter_time.date(), schedule.exit_time.date(),
@@ -439,6 +455,7 @@ def _confirm_single_schedule(db: Session, schedule: models.Schedule) -> Tuple[bo
 
     schedule.status = "confirmed"
     schedule.conflict_reason = None
+    _sync_tasks_for_schedule(db, schedule)
     return True, None
 
 
@@ -485,10 +502,15 @@ def recalculate_schedules(
 
 @router.post("", response_model=ScheduleOut)
 def save_schedule(data: ScheduleSaveIn, db: Session = Depends(get_db)):
+    from app.routers.inspections import check_ship_high_risk_unrectified, _sync_tasks_for_schedule
     ship = db.query(models.Ship).filter(models.Ship.id == data.ship_id).first()
     dock = db.query(models.Dock).filter(models.Dock.id == data.dock_id).first()
     if not ship or not dock:
         raise HTTPException(status_code=404, detail="船只或船坞不存在")
+
+    high_risk = check_ship_high_risk_unrectified(db, data.ship_id)
+    if high_risk:
+        raise HTTPException(status_code=400, detail="存在未整改的高风险隐患，不能生成正式排程：" + "；".join(high_risk))
 
     resource_ok, resource_issues = scheduler.check_schedule_resources(
         db, data.ship_id, data.enter_time.date(), data.exit_time.date()
@@ -564,6 +586,8 @@ def save_schedule(data: ScheduleSaveIn, db: Session = Depends(get_db)):
 
     from app.routers.costs import recalculate_ship_costs_and_quotations
     recalculate_ship_costs_and_quotations(db, [data.ship_id])
+    _sync_tasks_for_schedule(db, schedule)
+    db.commit()
 
     return {
         "id": schedule.id,

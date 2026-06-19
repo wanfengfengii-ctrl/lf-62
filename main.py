@@ -3,7 +3,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from app.database import engine, Base
-from app.routers import ships, docks, tides, tasks, schedules, pages, materials, crews, costs
+from app.routers import ships, docks, tides, tasks, schedules, pages, materials, crews, costs, inspections
 
 
 Base.metadata.create_all(bind=engine)
@@ -11,6 +11,10 @@ Base.metadata.create_all(bind=engine)
 app = FastAPI(title="潮汐船坞修船排程系统")
 
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
+import os
+UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 templates = Jinja2Templates(directory="app/templates")
 
 app.include_router(ships.router, prefix="/api/ships", tags=["ships"])
@@ -21,6 +25,7 @@ app.include_router(schedules.router, prefix="/api/schedules", tags=["schedules"]
 app.include_router(materials.router, prefix="/api/materials", tags=["materials"])
 app.include_router(crews.router, prefix="/api/crews", tags=["crews"])
 app.include_router(costs.router, prefix="/api/costs", tags=["costs"])
+app.include_router(inspections.router, prefix="/api/inspections", tags=["inspections"])
 app.include_router(pages.router, tags=["pages"])
 
 
