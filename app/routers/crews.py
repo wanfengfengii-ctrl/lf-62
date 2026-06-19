@@ -456,6 +456,9 @@ def _recalculate_schedules_by_crew(db: Session, crew_id: int):
             target_ship_ids=ship_ids,
             trigger_source=f"crew_change:{crew_id}"
         )
+    from app.routers.costs import recalculate_ship_costs_and_quotations
+    if ship_ids:
+        recalculate_ship_costs_and_quotations(db, ship_ids)
 
 
 def _recalculate_schedules_by_crew_type(db: Session, crew_type: str):
@@ -474,3 +477,6 @@ def _recalculate_schedules_by_crew_type(db: Session, crew_type: str):
             target_ship_ids=ship_ids,
             trigger_source=f"crew_type_change:{crew_type}"
         )
+    from app.routers.costs import recalculate_ship_costs_and_quotations
+    if ship_ids:
+        recalculate_ship_costs_and_quotations(db, ship_ids)

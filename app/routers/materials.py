@@ -263,3 +263,6 @@ def _recalculate_related_schedules(db: Session, material_id: int):
             target_ship_ids=ship_ids,
             trigger_source=f"material_change:{material_id}"
         )
+    from app.routers.costs import recalculate_ship_costs_and_quotations
+    if ship_ids:
+        recalculate_ship_costs_and_quotations(db, ship_ids)
